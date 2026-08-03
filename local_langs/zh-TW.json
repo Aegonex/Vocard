@@ -1,8 +1,8 @@
 {
     "connect": "連線",
-    "Connect to a voice channel.": "連線到語音頻道。",
+    "Connect to a voice or stage channel.": "連線到語音或舞台頻道。",
     "channel": "頻道",
-    "Provide a channel to connect.": "提供要連線的頻道。",
+    "Provide a voice or stage channel to connect.": "提供要連線的語音或舞台頻道。",
     "play": "播放",
     "Loads your input into the queue.": "將您的輸入加載到隊列中。",
     "Searches your query and displays the results.": "搜尋您的查詢並顯示結果。",

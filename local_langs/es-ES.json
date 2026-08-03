@@ -1,8 +1,8 @@
 {
     "connect": "conectar",
-    "Connect to a voice channel.": "Conectar a un canal de voz.",
+    "Connect to a voice or stage channel.": "Conectar a un canal de voz o escenario.",
     "channel": "canal",
-    "Provide a channel to connect.": "Proporciona un canal para conectar.",
+    "Provide a voice or stage channel to connect.": "Proporciona un canal de voz o escenario para conectar.",
     "play": "reproducir",
     "Loads your input into the queue.": "Carga tu entrada en la cola.",
     "Searches your query and displays the results.": "Busca tu consulta y muestra los resultados.",

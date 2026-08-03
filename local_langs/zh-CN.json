@@ -1,8 +1,8 @@
 {
     "connect": "连接",
-    "Connect to a voice channel.": "连接到语音频道。",
+    "Connect to a voice or stage channel.": "连接到语音或舞台频道。",
     "channel": "频道",
-    "Provide a channel to connect.": "提供要连接的频道。",
+    "Provide a voice or stage channel to connect.": "提供要连接的语音或舞台频道。",
     "play": "播放",
     "Loads your input into the queue.": "将您的输入加载到队列中。",
     "Searches your query and displays the results.": "搜索您的查询并显示结果。",
