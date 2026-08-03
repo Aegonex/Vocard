@@ -47,6 +47,54 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.controller["buttons"])
         self.assertIn("others", config.sources_settings)
 
+    def test_railway_mongo_alias_and_slash_only_prefix(self) -> None:
+        env = {
+            "DISCORD_TOKEN": "env-token",
+            "MONGO_URL": "mongodb://mongo.railway.internal:27017",
+            "LAVALINK_HOST": "lavalink.railway.internal",
+            "LAVALINK_PASSWORD": "secret",
+            "BOT_PREFIX": "null",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config.load("")
+            config.validate()
+
+        self.assertEqual(
+            config.mongodb_url, "mongodb://mongo.railway.internal:27017"
+        )
+        self.assertEqual(config.mongodb_name, "vocard")
+        self.assertIsNone(config.bot_prefix)
+
+    def test_dependency_startup_controls_are_parsed(self) -> None:
+        with patch.dict(
+            os.environ,
+            self.required_env(
+                DEPENDENCY_STARTUP_RETRIES="7",
+                DEPENDENCY_RETRY_DELAY="0",
+                DEPENDENCY_CONNECT_TIMEOUT="45",
+                STARTUP_TIMEOUT="500",
+                CHECK_FOR_UPDATES_ON_STARTUP="true",
+            ),
+            clear=True,
+        ):
+            config = Config.load("")
+
+        self.assertEqual(config.dependency_startup_retries, 7)
+        self.assertEqual(config.dependency_retry_delay, 0)
+        self.assertEqual(config.dependency_connect_timeout, 45)
+        self.assertEqual(config.startup_timeout, 500)
+        self.assertTrue(config.check_for_updates_on_startup)
+
+    def test_startup_timeout_stays_below_railway_health_timeout(self) -> None:
+        with patch.dict(
+            os.environ,
+            self.required_env(STARTUP_TIMEOUT="541"),
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "STARTUP_TIMEOUT"):
+                Config.load("")
+
     def test_env_overrides_partial_legacy_settings(self) -> None:
         config = self.load_settings(
             {
@@ -151,7 +199,7 @@ class ConfigTests(unittest.TestCase):
         message = str(context.exception)
         self.assertIn("DISCORD_TOKEN", message)
         self.assertIn("MONGODB_URL", message)
-        self.assertIn("MONGODB_NAME", message)
+        self.assertEqual(config.mongodb_name, "vocard")
 
 
 if __name__ == "__main__":

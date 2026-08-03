@@ -243,10 +243,14 @@ class Config:
         value, _ = self._value(settings, "genius_token", "GENIUS_TOKEN", default="")
         self.genius_token: str = str(value).strip() if value is not None else ""
 
-        value, _ = self._value(settings, "mongodb_url", "MONGODB_URL", default="")
+        value, _ = self._value(
+            settings, "mongodb_url", "MONGODB_URL", "MONGO_URL", default=""
+        )
         self.mongodb_url: str = str(value).strip() if value is not None else ""
 
-        value, _ = self._value(settings, "mongodb_name", "MONGODB_NAME", default="")
+        value, _ = self._value(
+            settings, "mongodb_name", "MONGODB_NAME", default="vocard"
+        )
         self.mongodb_name: str = str(value).strip() if value is not None else ""
 
         value, _ = self._value(settings, "invite_link", "INVITE_LINK", default="https://discord.gg/wRCgB7vBQv")
@@ -331,8 +335,16 @@ class Config:
         if self.search_platform is None:
             raise ValueError(f"{source} contains an unsupported search platform: {value!r}.")
 
-        value, _ = self._value(settings, "prefix", "BOT_PREFIX", "PREFIX", default="?")
-        self.bot_prefix: Optional[str] = None if value is None else str(value)
+        value, source = self._value(
+            settings, "prefix", "BOT_PREFIX", "PREFIX", default="?"
+        )
+        prefix_disabled = (
+            source in {"BOT_PREFIX", "PREFIX"}
+            and str(value).strip().lower() in {"null", "none", "disabled"}
+        )
+        self.bot_prefix: Optional[str] = (
+            None if value is None or prefix_disabled else str(value)
+        )
 
         self.activity: List[Dict[str, str]] = self._json_value(
             settings, "activity", "ACTIVITY_JSON", list, default=[]
@@ -439,6 +451,54 @@ class Config:
             default=True,
         )
         self.sync_commands_on_startup: bool = _parse_bool(value, source)
+
+        value, source = self._value(
+            settings,
+            "dependency_startup_retries",
+            "DEPENDENCY_STARTUP_RETRIES",
+            default=5,
+        )
+        self.dependency_startup_retries: int = _parse_int(
+            value, source, default=5, minimum=1, maximum=20
+        )
+
+        value, source = self._value(
+            settings,
+            "dependency_retry_delay",
+            "DEPENDENCY_RETRY_DELAY",
+            default=5,
+        )
+        self.dependency_retry_delay: int = _parse_int(
+            value, source, default=5, minimum=0, maximum=300
+        )
+
+        value, source = self._value(
+            settings,
+            "dependency_connect_timeout",
+            "DEPENDENCY_CONNECT_TIMEOUT",
+            default=20,
+        )
+        self.dependency_connect_timeout: int = _parse_int(
+            value, source, default=20, minimum=1, maximum=300
+        )
+
+        value, source = self._value(
+            settings,
+            "startup_timeout",
+            "STARTUP_TIMEOUT",
+            default=540,
+        )
+        self.startup_timeout: int = _parse_int(
+            value, source, default=540, minimum=30, maximum=540
+        )
+
+        value, source = self._value(
+            settings,
+            "check_for_updates_on_startup",
+            "CHECK_FOR_UPDATES_ON_STARTUP",
+            default=False,
+        )
+        self.check_for_updates_on_startup: bool = _parse_bool(value, source)
         self.version: str = str(settings.get("version", ""))
 
         self.initialized = True
@@ -448,7 +508,7 @@ class Config:
         errors: List[str] = []
         required_values = {
             "DISCORD_TOKEN (or TOKEN)": self.token,
-            "MONGODB_URL": self.mongodb_url,
+            "MONGODB_URL (or MONGO_URL)": self.mongodb_url,
             "MONGODB_NAME": self.mongodb_name,
         }
         for name, value in required_values.items():

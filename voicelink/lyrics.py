@@ -22,6 +22,7 @@ SOFTWARE.
 """
 
 import aiohttp
+import bs4
 import random
 import re
 import hmac

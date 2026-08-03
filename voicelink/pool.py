@@ -29,6 +29,7 @@ import re
 import aiohttp
 import logging
 
+from contextlib import suppress
 from discord import Client, Member
 from discord.ext.commands import Bot
 from typing import Dict, Optional, Union, List, Any, TYPE_CHECKING
@@ -81,7 +82,8 @@ class Node:
         yt_ratelimit: dict = None,
         session: Optional[aiohttp.ClientSession] = None,
         resume_key: Optional[str] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        connect_timeout: int = 20,
     ):
         self._bot: Bot = bot
         self._host: str = host
@@ -97,13 +99,16 @@ class Node:
         self._websocket_uri: str = f"{'wss' if self._secure else 'ws'}://{self._host}:{self._port}/" + NODE_VERSION + "/websocket"
         self._rest_uri: str = f"{'https' if self._secure else 'http'}://{self._host}:{self._port}"
 
-        self._session: aiohttp.ClientSession = session or aiohttp.ClientSession()
+        self._owns_session: bool = session is None
+        self._session: aiohttp.ClientSession = session or aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=connect_timeout)
+        )
         self._websocket: aiohttp.ClientWebSocketResponse = None
         self._task: asyncio.Task = None
 
         self.resume_key: str = resume_key or str(os.urandom(8).hex())
         self._session_id: str = None
-        self._available: bool = None
+        self._available: bool = False
 
         self._headers: Dict[str, str] = {
             "Authorization": self._password,
@@ -133,6 +138,11 @@ class Node:
     def is_connected(self) -> bool:
         """"Property which returns whether this node is connected or not"""
         return self._websocket is not None and not self._websocket.closed
+
+    @property
+    def is_available(self) -> bool:
+        """Return whether both the Lavalink WebSocket and REST API are ready."""
+        return self._available and self.is_connected
 
 
     @property
@@ -203,6 +213,7 @@ class Node:
                     break
 
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    self._available = False
                     self._logger.error(f"WebSocket error for node [{self._identifier}]")
                     break
                 
@@ -260,7 +271,7 @@ class Node:
             json=data
         ) as resp:
             if resp.status >= 300:
-                raise NodeException(f"Getting errors from Lavalink REST api")
+                raise NodeException("Getting errors from Lavalink REST api")
             
             if method == RequestMethod.DELETE:
                 return await resp.json(content_type=None)
@@ -285,23 +296,47 @@ class Node:
             
             self._logger.info(f"Node [{self._identifier}] is connected!")
         
-        except aiohttp.ClientConnectorError:
+        except aiohttp.ClientConnectorError as exc:
+            await self._close_transport()
             raise NodeConnectionFailure(
                 f"The connection to node '{self._identifier}' failed."
-            )
-        except aiohttp.WSServerHandshakeError:
+            ) from exc
+        except aiohttp.WSServerHandshakeError as exc:
+            await self._close_transport()
             raise NodeConnectionFailure(
                 f"The password for node '{self._identifier}' is invalid."
-            )
-        except aiohttp.InvalidURL:
+            ) from exc
+        except aiohttp.InvalidURL as exc:
+            await self._close_transport()
             raise NodeConnectionFailure(
                 f"The URI for node '{self._identifier}' is invalid."
-            )
+            ) from exc
+        except BaseException:
+            await self._close_transport()
+            raise
         
         if self.players:
             await self.reconnect()
 
         return self
+
+    async def _close_transport(self, *, close_session: bool = False) -> None:
+        """Stop WebSocket I/O without tearing down players."""
+        self._available = False
+
+        task, self._task = self._task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+        websocket, self._websocket = self._websocket, None
+        if websocket is not None and not websocket.closed:
+            with suppress(Exception):
+                await websocket.close()
+
+        if close_session and self._owns_session and not self._session.closed:
+            await self._session.close()
               
     async def disconnect(self, remove_from_pool: bool = False) -> None:
         """Disconnects a connected Lavalink node and removes it from the node pool.
@@ -309,12 +344,11 @@ class Node:
         """
         for player in self.players.copy().values():
             await player.teardown()
-        
-        await self._websocket.close()
+
+        await self._close_transport(close_session=remove_from_pool)
         if remove_from_pool:
-            del self._pool._nodes[self._identifier]
-        self._available = False
-        self._task.cancel()
+            self._pool._nodes.pop(self._identifier, None)
+            self._bot.remove_listener(self._update_handler, "on_socket_response")
         
         self._logger.info(f"Node [{self._identifier}] is disconnected!")
 
@@ -331,7 +365,7 @@ class Node:
 
                     if player.is_paused:
                         await player.set_pause(True)
-            except:
+            except Exception:
                 await player.teardown()
             await asyncio.sleep(2)
 
@@ -403,7 +437,7 @@ class Node:
             json={"refreshToken": token.token}
         ) as resp:
             if resp.status >= 300:
-                raise NodeException(f"Getting errors from Lavalink REST api")
+                raise NodeException("Getting errors from Lavalink REST api")
 
 class NodePool:
     """The base class for the node pool.
@@ -439,7 +473,7 @@ class NodePool:
          based on how players it has. This method will return a node with
          the least amount of players
         """
-        available_nodes = [node for node in cls._nodes.values() if node._available]
+        available_nodes = [node for node in cls._nodes.values() if node.is_available]
 
         if not available_nodes:
             raise NoNodesAvailable("There are no nodes available.")
@@ -458,8 +492,8 @@ class NodePool:
            If no identifier is provided, it will choose a node at random.
         """
 
-        available_nodes = { node
-            for _, node in cls._nodes.items() if node.is_connected
+        available_nodes = {
+            node for node in cls._nodes.values() if node.is_available
         }
 
         if identifier:
@@ -485,7 +519,8 @@ class NodePool:
         yt_ratelimit: dict = None,
         session: Optional[aiohttp.ClientSession] = None,
         resume_key: Optional[str] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        connect_timeout: int = 20,
     ) -> Node:
         """Creates a Node object to be then added into the node pool.
         """
@@ -498,9 +533,14 @@ class NodePool:
         node = Node(
             pool=cls, bot=bot, host=host, port=port, password=password,
             identifier=identifier, secure=secure, heartbeat=heartbeat, yt_ratelimit=yt_ratelimit,
-            session=session, resume_key=resume_key, logger=logger
+            session=session, resume_key=resume_key, logger=logger,
+            connect_timeout=connect_timeout,
         )
 
-        await node.connect()
+        try:
+            await node.connect()
+        except BaseException:
+            await node.disconnect(remove_from_pool=True)
+            raise
         cls._nodes[node._identifier] = node
         return node

@@ -65,6 +65,7 @@ class MongoDBHandler:
     _db: Optional[Any] = None
     _settings_db: Optional[AsyncIOMotorCollection] = None
     _users_db: Optional[AsyncIOMotorCollection] = None
+    _healthy: bool = False
     _lock: asyncio.Lock = asyncio.Lock()
 
     # Cache with TTL (Time To Live in seconds)
@@ -92,7 +93,9 @@ class MongoDBHandler:
     }
 
     @classmethod
-    async def init(cls, uri: str, db_name: str) -> None:
+    async def init(
+        cls, uri: str, db_name: str, *, timeout_seconds: int = 20
+    ) -> None:
         """
         Initialize the MongoDB connection with connection pooling and error handling.
         
@@ -113,36 +116,99 @@ class MongoDBHandler:
                 logger.warning("MongoDB client is already initialized. Skipping reinitialization.")
                 return
 
-            logger.debug("Initializing MongoDB client with URI: %s and DB name: %s", uri, db_name)
+            logger.debug("Initializing MongoDB client for database: %s", db_name)
 
+            client: Optional[AsyncIOMotorClient] = None
             try:
-                cls._client = AsyncIOMotorClient(
+                timeout_ms = timeout_seconds * 1000
+                client = AsyncIOMotorClient(
                     uri,
                     maxPoolSize=50,
-                    minPoolSize=5,
+                    minPoolSize=0,
                     maxIdleTimeMS=60000,
-                    retryWrites=True
+                    retryWrites=True,
+                    serverSelectionTimeoutMS=timeout_ms,
+                    connectTimeoutMS=timeout_ms,
+                    socketTimeoutMS=timeout_ms,
+                    waitQueueTimeoutMS=timeout_ms,
                 )
                 logger.debug("MongoDB client created successfully. Testing connection...")
 
-                await cls._client.server_info()
+                await client.server_info()
                 logger.debug("MongoDB connection test passed.")
 
-                cls._db = cls._client[db_name]
+                cls._client = client
+                cls._db = client[db_name]
                 cls._settings_db = cls._db["Settings"]
                 cls._users_db = cls._db["Users"]
+                cls._healthy = True
 
                 logger.info("MongoDB databases initialized: %s", db_name)
 
-            except Exception as e:
-                logger.error("MongoDB initialization failed: %s", str(e), exc_info=True)
-
+            except asyncio.CancelledError:
+                if client is not None:
+                    client.close()
                 cls._client = None
                 cls._db = None
                 cls._settings_db = None
                 cls._users_db = None
+                cls._healthy = False
+                raise
+            except Exception as e:
+                logger.error("MongoDB initialization failed: %s", str(e), exc_info=True)
+
+                if client is not None:
+                    client.close()
+                cls._client = None
+                cls._db = None
+                cls._settings_db = None
+                cls._users_db = None
+                cls._healthy = False
 
                 raise ConnectionError(f"Failed to initialize MongoDB: {str(e)}")
+
+    @classmethod
+    def is_ready(cls) -> bool:
+        """Return whether all MongoDB handles required by the bot are initialized."""
+        return cls._healthy and all(
+            value is not None
+            for value in (cls._client, cls._db, cls._settings_db, cls._users_db)
+        )
+
+    @classmethod
+    async def ping(cls, *, timeout_seconds: int = 5) -> bool:
+        """Refresh MongoDB readiness with a bounded round trip."""
+        client = cls._client
+        if client is None:
+            cls._healthy = False
+            return False
+
+        try:
+            await asyncio.wait_for(
+                client.admin.command("ping"), timeout=timeout_seconds
+            )
+        except Exception:
+            cls._healthy = False
+            return False
+
+        cls._healthy = True
+        return True
+
+    @classmethod
+    async def close(cls) -> None:
+        """Close the MongoDB client and clear process-local cached state."""
+        async with cls._lock:
+            if cls._client is not None:
+                cls._client.close()
+
+            cls._client = None
+            cls._db = None
+            cls._settings_db = None
+            cls._users_db = None
+            cls._healthy = False
+            cls._settings_buffer.clear()
+            cls._users_buffer.clear()
+            cls._last_access.clear()
                 
     @classmethod
     async def cleanup_cache(cls) -> None:

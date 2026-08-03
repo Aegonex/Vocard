@@ -3,6 +3,7 @@ import asyncio
 import logging
 import voicelink
 
+from contextlib import suppress
 from discord.ext import commands
 from typing import Optional
 
@@ -36,7 +37,7 @@ class IPCClient:
         self._websocket: Optional[aiohttp.ClientWebSocketResponse] = None
         self._task: Optional[asyncio.Task] = None
 
-        self._heanders = {
+        self._headers = {
             "Authorization": self._password,
             "User-Id": str(bot.user.id),
             "Client-Version": voicelink.Config().version
@@ -47,32 +48,28 @@ class IPCClient:
             try:
                 msg = await self._websocket.receive()
                 self._logger.debug(f"Received Message: {msg}")
-            except:
-                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._logger.warning("Dashboard connection closed: %s", exc)
+                msg = None
 
-            if msg.type in [aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED]:
+            if msg is None or msg.type in [
+                aiohttp.WSMsgType.CLOSE,
+                aiohttp.WSMsgType.CLOSED,
+                aiohttp.WSMsgType.ERROR,
+            ]:
                 self._is_connected = False
                 self._logger.info("Connection closed. Trying to reconnect in 10s.")
                 await asyncio.sleep(10)
 
                 if not self._is_connected:
                     try:
-                        await self.connect()
+                        await self._open_websocket()
                     except Exception as e:
-                        self._logger.error("Reconnection failed.")
+                        self._logger.error("Reconnection failed: %s", e)
             else:
                 self._bot.loop.create_task(process_methods(self, self._bot, msg.json()))
-
-    async def send(self, data: dict):
-        if self.is_connected:
-            try:
-                await self._websocket.send_json(data)
-                self._logger.debug(f"Send Message: {data}")
-            except ConnectionResetError as _:
-                await self.disconnect()
-                await self.connect()
-                await self._websocket.send_json(data)
-                self._logger.debug(f"Send Message: {data}")
 
     async def send(self, data: dict):
         # Check if the websocket is still open
@@ -101,32 +98,44 @@ class IPCClient:
         else:
             self._logger.error("Reconnection failed, not connected.")
                     
-    async def connect(self):    
-        try:
-            if not self._session:
-                self._session = aiohttp.ClientSession()
+    async def _open_websocket(self) -> None:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(
+                    total=voicelink.Config().dependency_connect_timeout
+                )
+            )
+        self._websocket = await self._session.ws_connect(
+            self._websocket_url, headers=self._headers, heartbeat=self._heartbeat
+        )
+        self._is_connected = True
 
+    async def connect(self):
+        try:
             if self._is_connecting or self._is_connected:
                 return
             
             self._is_connecting = True
-            self._websocket = await self._session.ws_connect(
-                self._websocket_url, headers=self._heanders, heartbeat=self._heartbeat
-            )
+            await self._open_websocket()
 
-            self._task = self._bot.loop.create_task(self._listen())
-            self._is_connected = True
+            if self._task is None or self._task.done():
+                self._task = self._bot.loop.create_task(self._listen())
             
             self._logger.info("Connected to dashboard!")
         
-        except aiohttp.ClientConnectorError:
-            raise Exception("Connection failed.")
+        except aiohttp.ClientConnectorError as exc:
+            self._is_connected = False
+            raise ConnectionError("Dashboard connection failed.") from exc
             
         except aiohttp.WSServerHandshakeError as e:
-            self._logger.error("Access forbidden: Missing bot ID, version mismatch, or invalid password.")
+            self._is_connected = False
+            raise ConnectionError(
+                "Dashboard access forbidden: missing bot ID, version mismatch, or invalid password."
+            ) from e
             
         except Exception as e:
-            self._logger.error("Error occurred while connecting to dashboard.", exc_info=e)
+            self._is_connected = False
+            raise ConnectionError("Could not connect to the dashboard.") from e
         
         finally:
             self._is_connecting = False
@@ -135,9 +144,27 @@ class IPCClient:
 
     async def disconnect(self) -> None:
         self._is_connected = False
-        self._task.cancel()
+        task, self._task = self._task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+        websocket, self._websocket = self._websocket, None
+        if websocket is not None and not websocket.closed:
+            with suppress(Exception):
+                await websocket.close()
+
+        session, self._session = self._session, None
+        if session is not None and not session.closed:
+            await session.close()
+
         self._logger.info("Disconnected to dashboard!")
     
     @property
     def is_connected(self) -> bool:
-        return self._is_connected and self._websocket and not self._websocket.closed
+        return bool(
+            self._is_connected
+            and self._websocket is not None
+            and not self._websocket.closed
+        )

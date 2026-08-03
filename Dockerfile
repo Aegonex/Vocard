@@ -1,33 +1,32 @@
-# Stage 1: Build
-FROM python:3.12-slim-bookworm as builder
+FROM python:3.12-slim-bookworm AS builder
 
-# Install build dependencies (gcc, Python headers, etc.)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Set the working directory
 WORKDIR /app
 
-# Copy only the requirements file to take advantage of Docker's caching
-COPY requirements.txt .
+COPY requirements.txt ./
 
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Stage 2: Runtime
 FROM python:3.12-slim-bookworm
 
-# Set the working directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN groupadd --gid 10001 vocard \
+    && useradd --uid 10001 --gid vocard --create-home --shell /usr/sbin/nologin vocard \
+    && mkdir -p /app \
+    && chown vocard:vocard /app
+
 WORKDIR /app
 
-# Copy installed Python packages from the builder stage
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 
-# Copy the application code
-COPY . .
+COPY --chown=vocard:vocard . .
 
-# Run the application
-CMD ["python", "-u", "main.py"]
+USER vocard
+
+STOPSIGNAL SIGTERM
+
+CMD ["python", "main.py"]

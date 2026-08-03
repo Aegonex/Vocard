@@ -21,18 +21,33 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import discord
-import sys
-import os
 import aiohttp
-import update
+import asyncio
+import discord
 import logging
+import os
+import signal
+import sys
+import update
 import function as func
 
+from aiohttp import web
+from contextlib import suppress
 from discord.ext import commands
 from logging.handlers import TimedRotatingFileHandler
-from voicelink import Config, LangHandler, MongoDBHandler, IPCClient, VoicelinkException
+from voicelink import (
+    Config,
+    IPCClient,
+    LangHandler,
+    MongoDBHandler,
+    NodePool,
+    VoicelinkException,
+)
 from voicelink.utils import dispatch_message
+
+DISCORD_SHUTDOWN_TIMEOUT = 5
+RESOURCE_SHUTDOWN_TIMEOUT = 20
+
 
 class Translator(discord.app_commands.Translator):
     MISSING_TRANSLATOR: dict[str, list[str]] = {}
@@ -68,7 +83,121 @@ class Vocard(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.ipc_client: IPCClient
+        self.ipc_client: IPCClient | None = None
+        self._health_runner: web.AppRunner | None = None
+        self._vocard_closing = False
+
+    def health_status(self) -> dict[str, bool | str]:
+        """Return a deployment/readiness snapshot without exposing secrets."""
+        discord_ready = (
+            self.is_ready() and not self.is_closed() and not self._vocard_closing
+        )
+        mongodb_ready = MongoDBHandler.is_ready()
+        lavalink_ready = any(node.is_available for node in NodePool().nodes.values())
+        healthy = discord_ready and mongodb_ready and lavalink_ready
+        return {
+            "status": "ok" if healthy else "starting",
+            "discord": discord_ready,
+            "mongodb": mongodb_ready,
+            "lavalink": lavalink_ready,
+        }
+
+    async def _health_check(self, _: web.Request) -> web.Response:
+        await MongoDBHandler.ping(
+            timeout_seconds=min(bot_config.dependency_connect_timeout, 5)
+        )
+        status = self.health_status()
+        return web.json_response(status, status=200 if status["status"] == "ok" else 503)
+
+    async def _start_health_server(self) -> None:
+        port_value = os.getenv("PORT")
+        if not port_value:
+            func.logger.info("PORT is not set; the deployment health server is disabled.")
+            return
+
+        try:
+            port = int(port_value)
+        except ValueError as exc:
+            raise ValueError("PORT must be a valid integer.") from exc
+        if not 1 <= port <= 65535:
+            raise ValueError("PORT must be between 1 and 65535.")
+
+        app = web.Application()
+        app.router.add_get("/health", self._health_check)
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        try:
+            await web.TCPSite(runner, host="0.0.0.0", port=port).start()
+        except BaseException:
+            await runner.cleanup()
+            raise
+
+        self._health_runner = runner
+        func.logger.info("Health server listening on 0.0.0.0:%s/health", port)
+
+    async def _connect_mongodb(self) -> None:
+        for attempt in range(1, bot_config.dependency_startup_retries + 1):
+            try:
+                await MongoDBHandler.init(
+                    bot_config.mongodb_url,
+                    bot_config.mongodb_name,
+                    timeout_seconds=bot_config.dependency_connect_timeout,
+                )
+                return
+            except Exception as exc:
+                func.logger.warning(
+                    "MongoDB connection attempt %s/%s failed: %s",
+                    attempt,
+                    bot_config.dependency_startup_retries,
+                    exc,
+                )
+                if attempt == bot_config.dependency_startup_retries:
+                    raise RuntimeError(
+                        "MongoDB did not become available during startup."
+                    ) from exc
+                await asyncio.sleep(bot_config.dependency_retry_delay)
+
+    async def close(self) -> None:
+        """Close the gateway promptly and bound all remaining resource cleanup."""
+        if self._vocard_closing:
+            return
+        self._vocard_closing = True
+
+        try:
+            await asyncio.wait_for(
+                super().close(), timeout=DISCORD_SHUTDOWN_TIMEOUT
+            )
+        except Exception as exc:
+            func.logger.warning("Discord shutdown did not finish cleanly: %s", exc)
+
+        cleanup_coroutines = []
+        if self.ipc_client is not None:
+            cleanup_coroutines.append(self.ipc_client.disconnect())
+
+        cleanup_coroutines.extend(
+            node.disconnect(remove_from_pool=True)
+            for node in list(NodePool().nodes.values())
+        )
+        cleanup_coroutines.append(MongoDBHandler.close())
+
+        if self._health_runner is not None:
+            health_runner, self._health_runner = self._health_runner, None
+            cleanup_coroutines.append(health_runner.cleanup())
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*cleanup_coroutines, return_exceptions=True),
+                timeout=RESOURCE_SHUTDOWN_TIMEOUT,
+            )
+        except TimeoutError:
+            func.logger.warning(
+                "Resource cleanup exceeded the %s-second shutdown budget.",
+                RESOURCE_SHUTDOWN_TIMEOUT,
+            )
+        else:
+            for result in results:
+                if isinstance(result, Exception):
+                    func.logger.warning("Resource cleanup failed: %s", result)
 
     async def on_message(self, message: discord.Message, /) -> None:
         # Ignore messages from bots or DMs
@@ -106,38 +235,85 @@ class Vocard(commands.Bot):
         await self.process_commands(message)
 
     async def setup_hook(self) -> None:
-        # Connecting to MongoDB
-        await MongoDBHandler.init(bot_config.mongodb_url, bot_config.mongodb_name)
+        # Start the Railway-compatible health endpoint before waiting for dependencies.
+        await self._start_health_server()
+        await self._setup_application()
+
+    async def _setup_application(self) -> None:
+        """Initialize required services within the deployment startup deadline."""
+        # Connecting to MongoDB with bounded retries handles service startup ordering.
+        await self._connect_mongodb()
 
         # Set translator
         await self.tree.set_translator(Translator())
 
         # Loading all the module in `cogs` folder
-        for module in os.listdir(func.ROOT_DIR + '/cogs'):
+        failed_extensions: list[str] = []
+        for module in sorted(os.listdir(func.ROOT_DIR + '/cogs')):
             if module.endswith('.py'):
                 try:
                     await self.load_extension(f"cogs.{module[:-3]}")
                     func.logger.info(f"Loaded {module[:-3]}")
-                except Exception as e:
-                    func.logger.error(f"Something went wrong while loading {module[:-3]} cog.", exc_info=e)
+                except Exception:
+                    failed_extensions.append(module[:-3])
+                    func.logger.exception(
+                        "Something went wrong while loading %s cog.", module[:-3]
+                    )
 
-        self.ipc_client: IPCClient = IPCClient(self, **bot_config.ipc_client)
+        if failed_extensions:
+            raise RuntimeError(
+                "Required cogs failed to load: " + ", ".join(failed_extensions)
+            )
+
+        self.ipc_client = IPCClient(self, **bot_config.ipc_client)
         if bot_config.ipc_client.get("enable", False):
-            try:
-                await self.ipc_client.connect()
-            except Exception as e:
-                func.logger.error(f"Cannot connected to dashboard! - Reason: {e}")
+            for attempt in range(1, bot_config.dependency_startup_retries + 1):
+                try:
+                    await asyncio.wait_for(
+                        self.ipc_client.connect(),
+                        timeout=bot_config.dependency_connect_timeout,
+                    )
+                    if not self.ipc_client.is_connected:
+                        raise ConnectionError("Dashboard connection did not become ready.")
+                    break
+                except Exception as exc:
+                    func.logger.warning(
+                        "Dashboard connection attempt %s/%s failed: %s",
+                        attempt,
+                        bot_config.dependency_startup_retries,
+                        exc,
+                    )
+                    if attempt == bot_config.dependency_startup_retries:
+                        raise RuntimeError(
+                            "Dashboard IPC is enabled but unavailable."
+                        ) from exc
+                    await asyncio.sleep(bot_config.dependency_retry_delay)
 
         # Keep application commands current without writing runtime state to settings.json.
         if bot_config.sync_commands_on_startup:
-            try:
-                await self.tree.sync()
-            except discord.HTTPException as e:
-                func.logger.error("Cannot sync application commands.", exc_info=e)
-            else:
-                for locale_key, values in self.tree.translator.MISSING_TRANSLATOR.items():
-                    func.logger.warning(f'Missing translation for "{", ".join(values)}" in "{locale_key}"')
-                self.tree.translator.MISSING_TRANSLATOR.clear()
+            for attempt in range(1, bot_config.dependency_startup_retries + 1):
+                try:
+                    await asyncio.wait_for(
+                        self.tree.sync(),
+                        timeout=bot_config.dependency_connect_timeout,
+                    )
+                    break
+                except (discord.HTTPException, TimeoutError) as exc:
+                    func.logger.warning(
+                        "Application command sync attempt %s/%s failed: %s",
+                        attempt,
+                        bot_config.dependency_startup_retries,
+                        exc,
+                    )
+                    if attempt == bot_config.dependency_startup_retries:
+                        raise RuntimeError(
+                            "Application commands could not be synchronized."
+                        ) from exc
+                    await asyncio.sleep(bot_config.dependency_retry_delay)
+
+            for locale_key, values in self.tree.translator.MISSING_TRANSLATOR.items():
+                func.logger.warning(f'Missing translation for "{", ".join(values)}" in "{locale_key}"')
+            self.tree.translator.MISSING_TRANSLATOR.clear()
 
     async def on_ready(self):
         func.logger.info("------------------")
@@ -241,6 +417,84 @@ bot = Vocard(
     intents=intents
 )
 
+
+async def run_bot(client: commands.Bot, token: str) -> None:
+    """Run Discord until completion or an orchestrator shutdown signal arrives."""
+    loop = asyncio.get_running_loop()
+    shutdown_requested = asyncio.Event()
+    registered_signals: list[signal.Signals] = []
+
+    def request_shutdown(received_signal: signal.Signals) -> None:
+        if not shutdown_requested.is_set():
+            func.logger.info("Received %s; shutting down gracefully.", received_signal.name)
+            shutdown_requested.set()
+
+    for received_signal in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(
+                received_signal, request_shutdown, received_signal
+            )
+        except (NotImplementedError, RuntimeError):
+            continue
+        registered_signals.append(received_signal)
+
+    try:
+        async with client:
+            client_task = asyncio.create_task(
+                client.start(token, reconnect=True), name="discord-client"
+            )
+            ready_task = asyncio.create_task(
+                client.wait_until_ready(), name="discord-ready"
+            )
+            shutdown_task = asyncio.create_task(
+                shutdown_requested.wait(), name="shutdown-signal"
+            )
+            try:
+                done, _ = await asyncio.wait(
+                    {client_task, ready_task, shutdown_task},
+                    timeout=bot_config.startup_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    raise RuntimeError(
+                        f"Startup exceeded the {bot_config.startup_timeout}-second "
+                        "deadline before Discord became ready."
+                    )
+                if client_task in done:
+                    await client_task
+                elif shutdown_task in done:
+                    client_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await client_task
+                else:
+                    await ready_task
+                    done, _ = await asyncio.wait(
+                        {client_task, shutdown_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if client_task in done:
+                        await client_task
+                    else:
+                        client_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await client_task
+            finally:
+                for task in (ready_task, shutdown_task, client_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(
+                    ready_task,
+                    shutdown_task,
+                    client_task,
+                    return_exceptions=True,
+                )
+    finally:
+        for received_signal in registered_signals:
+            loop.remove_signal_handler(received_signal)
+
+
 if __name__ == "__main__":
-    update.check_version(with_msg=True)
-    bot.run(bot_config.token, root_logger=True)
+    if bot_config.check_for_updates_on_startup:
+        update.check_version(with_msg=True)
+    discord.utils.setup_logging(root=True)
+    asyncio.run(run_bot(bot, bot_config.token))

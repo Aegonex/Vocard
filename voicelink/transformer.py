@@ -189,7 +189,12 @@ DEFAULT_DECODER_MAPPING: Dict[str, Callable[[DataReader], Mapping[str, Any]]] = 
     'local': decode_probe_info,
     'deezer': decode_lavasrc_fields,
     'spotify': decode_lavasrc_fields,
-    'applemusic': decode_lavasrc_fields
+    'applemusic': decode_lavasrc_fields,
+    'yandexmusic': decode_lavasrc_fields,
+    'vkmusic': decode_lavasrc_fields,
+    'tidal': decode_lavasrc_fields,
+    'qobuz': decode_lavasrc_fields,
+    'jiosaavn': decode_lavasrc_fields
 }
 
 def read_utfm(utf_len: int, utf_bytes: bytes) -> str:

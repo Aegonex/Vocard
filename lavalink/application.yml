@@ -1,0 +1,65 @@
+server:
+  port: "${PORT:2333}"
+  address: "::"
+
+lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.2"
+      snapshot: false
+    - dependency: "com.github.topi314.lavasrc:lavasrc-plugin:4.8.3"
+      snapshot: false
+  server:
+    password: "${LAVALINK_SERVER_PASSWORD}"
+    sources:
+      youtube: false
+
+plugins:
+  youtube:
+    enabled: true
+  lavasrc:
+    providers:
+      - 'ytsearch:"%ISRC%"'
+      - "ytsearch:%QUERY%"
+    sources:
+      spotify: "${LAVASRC_SPOTIFY_ENABLED:false}"
+      applemusic: "${LAVASRC_APPLEMUSIC_ENABLED:false}"
+      deezer: "${LAVASRC_DEEZER_ENABLED:false}"
+      yandexmusic: "${LAVASRC_YANDEX_ENABLED:false}"
+      vkmusic: "${LAVASRC_VK_ENABLED:false}"
+      tidal: "${LAVASRC_TIDAL_ENABLED:false}"
+      qobuz: "${LAVASRC_QOBUZ_ENABLED:false}"
+      jiosaavn: "${LAVASRC_JIOSAAVN_ENABLED:false}"
+      youtube: false
+      flowerytts: false
+      ytdlp: false
+    spotify:
+      clientId: "${SPOTIFY_CLIENT_ID:}"
+      clientSecret: "${SPOTIFY_CLIENT_SECRET:}"
+      countryCode: "${LAVASRC_COUNTRY_CODE:US}"
+    applemusic:
+      countryCode: "${LAVASRC_COUNTRY_CODE:US}"
+      mediaAPIToken: "${APPLE_MUSIC_MEDIA_API_TOKEN:}"
+    deezer:
+      masterDecryptionKey: "${DEEZER_MASTER_DECRYPTION_KEY:}"
+      arl: "${DEEZER_ARL:}"
+      formats:
+        - "MP3_128"
+    yandexmusic:
+      accessToken: "${YANDEX_MUSIC_ACCESS_TOKEN:}"
+    vkmusic:
+      userToken: "${VK_MUSIC_USER_TOKEN:}"
+    tidal:
+      countryCode: "${LAVASRC_COUNTRY_CODE:US}"
+      token: "${TIDAL_TOKEN:}"
+    qobuz:
+      userOauthToken: "${QOBUZ_USER_OAUTH_TOKEN:}"
+      appId: "${QOBUZ_APP_ID:}"
+      appSecret: "${QOBUZ_APP_SECRET:}"
+    jiosaavn:
+      decryption:
+        secretKey: "${JIOSAAVN_DECRYPTION_SECRET_KEY:}"
+
+metrics:
+  prometheus:
+    enabled: true
+    endpoint: /metrics

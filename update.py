@@ -103,8 +103,21 @@ def check_version(with_msg=False):
     Returns:
         str: the latest version.
     """
-    response = requests.get(GITHUB_API_URL)
-    latest_version = response.json().get("name", __version__)
+    try:
+        response = requests.get(GITHUB_API_URL, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+        latest_version = payload.get("name", __version__)
+        if not isinstance(latest_version, str) or not latest_version:
+            latest_version = __version__
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        if with_msg:
+            print(
+                f"{bcolors.WARNING}Could not check for updates; continuing with "
+                f"{__version__}. Reason: {exc}{bcolors.ENDC}"
+            )
+        return __version__
+
     if with_msg:
         msg = (
             f"{bcolors.OKGREEN}Your bot is up-to-date! - {latest_version}{bcolors.ENDC}" 

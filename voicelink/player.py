@@ -66,7 +66,7 @@ async def connect_channel(ctx: Union[commands.Context, Interaction], channel: Vo
     texts = await LangHandler.get_lang(ctx.guild.id, "voice.connection.noChannel", "voice.connection.noPermission")
     try:
         channel = channel or ctx.author.voice.channel if isinstance(ctx, commands.Context) else ctx.user.voice.channel
-    except:
+    except Exception:
         raise VoicelinkException(texts[0])
 
     check = channel.permissions_for(ctx.guild.me)
@@ -499,7 +499,7 @@ class Player(VoiceProtocol):
             async for message in self.context.channel.history(limit=5):
                 if message.id == self.controller.id:
                     return True
-        except:
+        except Exception:
             pass
 
         return False
@@ -514,7 +514,7 @@ class Player(VoiceProtocol):
             
             if self.is_ipc_connected:
                 await self.send_ws({"op": "playerClose"})
-        except:
+        except Exception:
             pass
 
         try:
@@ -525,12 +525,12 @@ class Player(VoiceProtocol):
                     await self.controller.edit(embed=self.build_embed(), view=None)
                 else: 
                     await self.controller.delete()
-        except:
+        except Exception:
             pass
 
         try:
             await self.destroy()
-        except:
+        except Exception:
             pass
 
     async def get_tracks(
@@ -580,7 +580,7 @@ class Player(VoiceProtocol):
         
         try:
             await self.disconnect()
-        except:
+        except Exception:
             # 'NoneType' has no attribute '_get_voice_client_key' raised by self.cleanup() ->
             # assume we're already disconnected and cleaned up
             assert self.channel is None and not self.is_connected
@@ -864,7 +864,7 @@ class Player(VoiceProtocol):
         """Changes the audio processing node for the guild.."""
         try:
             node = NodePool.get_node(identifier=identifier)
-        except:
+        except Exception:
             return await self.teardown()
 
         self._node._players.pop(self.guild.id)

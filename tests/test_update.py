@@ -2,11 +2,20 @@ import tempfile
 import unittest
 
 from pathlib import Path
+from unittest.mock import patch
 
+import requests
 import update
 
 
 class UpdaterConfigTests(unittest.TestCase):
+    def test_version_check_is_non_fatal_when_github_is_unavailable(self) -> None:
+        with patch(
+            "update.requests.get",
+            side_effect=requests.ConnectionError("offline"),
+        ):
+            self.assertEqual(update.check_version(), update.__version__)
+
     def test_standard_user_configuration_is_preserved(self) -> None:
         self.assertIn(".env", update.IGNORE_FILES)
         self.assertIn("settings.json", update.IGNORE_FILES)

@@ -3,7 +3,7 @@
     "client_id": 0,
     "genius_token": "",
     "mongodb_url": "",
-    "mongodb_name": "",
+    "mongodb_name": "vocard",
     "nodes": {
         "DEFAULT": {
             "host": "lavalink",
@@ -23,6 +23,11 @@
     },   
     "prefix": "?",
     "sync_commands_on_startup": true,
+    "dependency_startup_retries": 5,
+    "dependency_retry_delay": 5,
+    "dependency_connect_timeout": 20,
+    "startup_timeout": 540,
+    "check_for_updates_on_startup": false,
     "activity": [
         {"type": "listening", "name": "/help", "status": "online"}
     ],

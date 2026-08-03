@@ -27,6 +27,7 @@ import discord
 import voicelink
 import function as func
 
+from contextlib import suppress
 from discord.ext import commands
 
 from voicelink import MongoDBHandler, Config
@@ -38,17 +39,133 @@ class Listeners(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.voicelink = voicelink.NodePool()
+        self._restore_task: asyncio.Task | None = None
+        self._node_supervisors: dict[str, asyncio.Task] = {}
 
-        bot.loop.create_task(self.start_nodes())
-        bot.loop.create_task(self.restore_last_session_players())
+    async def cog_load(self) -> None:
+        await self.start_nodes()
+        self._restore_task = asyncio.create_task(
+            self.restore_last_session_players(), name="restore-last-session"
+        )
+
+    async def cog_unload(self) -> None:
+        supervisor_tasks = list(self._node_supervisors.values())
+        self._node_supervisors.clear()
+        for task in supervisor_tasks:
+            task.cancel()
+        if supervisor_tasks:
+            await asyncio.gather(*supervisor_tasks, return_exceptions=True)
+
+        if self._restore_task is not None:
+            self._restore_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._restore_task
+            self._restore_task = None
+
+        for node in list(self.voicelink.nodes.values()):
+            with suppress(Exception):
+                await node.disconnect(remove_from_pool=True)
         
     async def start_nodes(self) -> None:
-        """Connect and intiate nodes."""
-        for n in Config().nodes.values():
+        """Connect configured nodes with bounded retries during startup."""
+        config = Config()
+        pending = {identifier: node.copy() for identifier, node in config.nodes.items()}
+        errors: dict[str, str] = {}
+
+        for attempt in range(1, config.dependency_startup_retries + 1):
+            pending_items = list(pending.items())
+            results = await asyncio.gather(
+                *(
+                    self._connect_node(identifier, node_config, config)
+                    for identifier, node_config in pending_items
+                ),
+                return_exceptions=True,
+            )
+            for (identifier, _), result in zip(pending_items, results):
+                if isinstance(result, Exception):
+                    exc = result
+                    errors[identifier] = str(exc)
+                    func.logger.warning(
+                        "Lavalink node [%s] connection attempt %s/%s failed: %s",
+                        identifier,
+                        attempt,
+                        config.dependency_startup_retries,
+                        exc,
+                    )
+                else:
+                    pending.pop(identifier, None)
+                    errors.pop(identifier, None)
+
+            if not pending:
+                break
+            if attempt < config.dependency_startup_retries:
+                await asyncio.sleep(config.dependency_retry_delay)
+
+        available_nodes = [
+            node for node in self.voicelink.nodes.values() if node.is_available
+        ]
+        if not available_nodes:
+            details = "; ".join(
+                f"{identifier}: {reason}" for identifier, reason in errors.items()
+            )
+            raise RuntimeError(
+                "No Lavalink node became available during startup"
+                + (f" ({details})" if details else "")
+            )
+
+        if pending:
+            func.logger.warning(
+                "Bot is starting with %s Lavalink node(s); unavailable nodes: %s",
+                len(available_nodes),
+                ", ".join(sorted(pending)),
+            )
+            for identifier, node_config in pending.items():
+                self._node_supervisors[identifier] = asyncio.create_task(
+                    self._supervise_node(identifier, node_config, config),
+                    name=f"lavalink-supervisor-{identifier}",
+                )
+
+    async def _connect_node(self, identifier: str, node_config: dict, config) -> None:
+        existing = self.voicelink.nodes.get(identifier)
+        connect = (
+            existing.connect()
+            if existing is not None
+            else self.voicelink.create_node(
+                bot=self.bot,
+                connect_timeout=config.dependency_connect_timeout,
+                **node_config,
+            )
+        )
+        await asyncio.wait_for(connect, timeout=config.dependency_connect_timeout)
+
+        node = self.voicelink.nodes.get(identifier)
+        if node is None or not node.is_available:
+            raise ConnectionError(f"Lavalink node [{identifier}] is not ready.")
+
+    async def _supervise_node(
+        self, identifier: str, node_config: dict, config
+    ) -> None:
+        """Keep retrying a secondary node that was unavailable at startup."""
+        retry_delay = max(config.dependency_retry_delay, 5)
+        while True:
             try:
-                await self.voicelink.create_node(bot=self.bot, **n)
-            except Exception as e:
-                func.logger.error(f'Node {n["identifier"]} is not able to connect! - Reason: {e}')
+                await self._connect_node(identifier, node_config, config)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                func.logger.warning(
+                    "Lavalink node [%s] is still unavailable: %s; retrying in %ss.",
+                    identifier,
+                    exc,
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                func.logger.info(
+                    "Lavalink node [%s] became available in the background.",
+                    identifier,
+                )
+                return
 
     async def restore_last_session_players(self) -> None:
         """Re-establish connections for players from the last session."""
@@ -144,7 +261,7 @@ class Listeners(commands.Cog):
         try:
             player._track_is_stuck = True
             await player.context.send(f"{error['message']} The next song will begin in the next 5 seconds.", delete_after=10)
-        except:
+        except Exception:
             pass
 
     @commands.Cog.listener()
