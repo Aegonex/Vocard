@@ -211,9 +211,13 @@ class Ping:
         return s_runtime
 
 class TempCtx():
-    def __init__(self, author: discord.Member, channel: discord.VoiceChannel) -> None:
+    def __init__(
+        self,
+        author: discord.Member,
+        channel: discord.VoiceChannel | discord.StageChannel,
+    ) -> None:
         self.author: discord.Member = author
-        self.channel: discord.VoiceChannel = channel
+        self.channel: discord.VoiceChannel | discord.StageChannel = channel
         self.guild: discord.Guild = channel.guild
 
 def format_to_ms(time_str: str) -> int:

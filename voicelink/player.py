@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING
 from discord import (
     Client,
     Guild,
+    StageChannel,
     VoiceChannel,
     VoiceProtocol,
     Member,
@@ -62,15 +63,34 @@ from .utils import format_ms, dispatch_message
 if TYPE_CHECKING:
     from .ipc import IPCClient
 
-async def connect_channel(ctx: Union[commands.Context, Interaction], channel: VoiceChannel = None):
+VocalChannel = Union[VoiceChannel, StageChannel]
+VOICE_STATE_TIMEOUT = 10.0
+VOICE_STATE_POLL_INTERVAL = 0.1
+
+
+async def connect_channel(
+    ctx: Union[commands.Context, Interaction],
+    channel: Optional[VocalChannel] = None,
+):
     texts = await LangHandler.get_lang(ctx.guild.id, "voice.connection.noChannel", "voice.connection.noPermission")
-    try:
-        channel = channel or ctx.author.voice.channel if isinstance(ctx, commands.Context) else ctx.user.voice.channel
-    except Exception:
+    member = ctx.author if isinstance(ctx, commands.Context) else ctx.user
+    if channel is None:
+        voice_state = getattr(member, "voice", None)
+        channel = getattr(voice_state, "channel", None)
+
+    if channel is None:
         raise VoicelinkException(texts[0])
 
-    check = channel.permissions_for(ctx.guild.me)
-    if check.connect == False or check.speak == False:
+    permissions = channel.permissions_for(channel.guild.me)
+    allowed = permissions.connect
+    if isinstance(channel, StageChannel):
+        # Stage speakers are controlled through suppression rather than the
+        # normal voice-channel SPEAK permission.
+        allowed = allowed and permissions.mute_members
+    else:
+        allowed = allowed and permissions.speak
+
+    if not allowed:
         raise VoicelinkException(texts[1])
 
     settings = await MongoDBHandler.get_settings(channel.guild.id)
@@ -96,16 +116,16 @@ class Player(VoiceProtocol):
        ```
     """
 
-    def __call__(self, client: Client, channel: VoiceChannel):
+    def __call__(self, client: Client, channel: VocalChannel):
         self.client: Client = client
-        self.channel: VoiceChannel = channel
+        self.channel: VocalChannel = channel
 
         return self
 
     def __init__(
         self, 
         client: Optional[Client] = None, 
-        channel: Optional[VoiceChannel] = None, 
+        channel: Optional[VocalChannel] = None,
         ctx: Union[commands.Context, Interaction] = None,
         settings: dict[str, Any] = None
     ):
@@ -116,7 +136,7 @@ class Player(VoiceProtocol):
         
         self.context = ctx
         self.dj: Member = ctx.user if isinstance(ctx, Interaction) else ctx.author
-        self.channel: VoiceChannel = channel
+        self.channel: VocalChannel = channel
         self._guild = channel.guild if channel else None
 
         self.settings: dict = settings
@@ -552,12 +572,113 @@ class Player(VoiceProtocol):
 
     async def connect(self, *, timeout: float, reconnect: bool, self_deaf: bool = True, self_mute: bool = False):
         """Connects the player to a voice channel."""
-        await self.guild.change_voice_state(channel=self.channel, self_deaf=True, self_mute=self_mute)
-        self._node._players[self.guild.id] = self
-        self._is_connected = True
+        channel = self.channel
+        guild = self.guild
+        try:
+            await guild.change_voice_state(
+                channel=channel,
+                self_deaf=True,
+                self_mute=self_mute,
+            )
+            self._node._players[guild.id] = self
+            self._is_connected = True
+
+            confirmation_timeout = (
+                min(timeout, VOICE_STATE_TIMEOUT)
+                if timeout > 0
+                else VOICE_STATE_TIMEOUT
+            )
+            deadline = (
+                asyncio.get_running_loop().time() + confirmation_timeout
+            )
+            voice_state = await self._wait_for_voice_state(deadline=deadline)
+            await self._ensure_stage_speaker(
+                voice_state,
+                deadline=deadline,
+            )
+        except asyncio.CancelledError:
+            await self._cleanup_failed_connection(guild)
+            raise
+        except Exception as exc:
+            if self._logger:
+                self._logger.warning(
+                    "Could not establish a voice connection to channel %s(%s).",
+                    channel.name,
+                    channel.id,
+                    exc_info=exc,
+                )
+
+            await self._cleanup_failed_connection(guild)
+            raise VoicelinkException(
+                self.get_msg("voice.connection.noPermission")
+            ) from exc
 
         if self.channel:
             self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) has been connected to {self.channel.name}({self.channel.id}).")
+
+    async def _cleanup_failed_connection(self, guild: Guild) -> None:
+        """Remove Discord and Lavalink state left by a failed voice join."""
+        try:
+            await guild.change_voice_state(channel=None)
+        except Exception:
+            pass
+
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
+        self._node._players.pop(guild.id, None)
+        self._is_connected = False
+        self.channel = None
+
+    async def _ensure_stage_speaker(
+        self,
+        voice_state,
+        *,
+        deadline: float,
+    ) -> None:
+        """Promote this bot to speaker after joining a Stage channel."""
+        if not isinstance(self.channel, StageChannel):
+            return
+
+        if not voice_state.suppress:
+            return
+
+        await self.guild.me.edit(suppress=False)
+        await self._wait_for_voice_state(
+            deadline=deadline,
+            suppress=False,
+        )
+
+    async def _wait_for_voice_state(
+        self,
+        *,
+        deadline: float,
+        suppress: Optional[bool] = None,
+    ):
+        """Wait for Discord's cached voice state to reach the target."""
+        while True:
+            voice_state = self.guild.me.voice
+            current_channel = getattr(voice_state, "channel", None)
+            in_channel = (
+                current_channel is not None
+                and self.channel is not None
+                and current_channel.id == self.channel.id
+            )
+            suppression_matches = (
+                suppress is None
+                or (voice_state is not None and voice_state.suppress is suppress)
+            )
+            if in_channel and suppression_matches:
+                return voice_state
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError(
+                    "Discord did not confirm the voice state in time."
+                )
+            await asyncio.sleep(min(VOICE_STATE_POLL_INTERVAL, remaining))
             
     async def stop(self):
         """Stops the currently playing track."""

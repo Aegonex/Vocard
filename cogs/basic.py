@@ -101,10 +101,17 @@ class Basic(commands.Cog):
         return [app_commands.Choice(name=truncate_string(f"🕒 [{format_ms(track['length'])}] {track['author']} - {track['title']}", 100), value=track['uri']) for track in history.values() if len(track['uri']) <= 100][:25]
             
     @commands.hybrid_command(name="connect", aliases=get_aliases("connect"))
-    @app_commands.describe(channel="Provide a channel to connect.")
+    @app_commands.describe(channel="Provide a voice or stage channel to connect.")
     @commands.dynamic_cooldown(cooldown_check, commands.BucketType.guild)
-    async def connect(self, ctx: commands.Context, channel: discord.VoiceChannel = None) -> None:
-        "Connect to a voice channel."
+    async def connect(
+        self,
+        ctx: commands.Context,
+        channel: discord.VoiceChannel | discord.StageChannel | None = None,
+    ) -> None:
+        "Connect to a voice or stage channel."
+        if ctx.interaction and not ctx.interaction.response.is_done():
+            await ctx.defer()
+
         try:
             player = await voicelink.connect_channel(ctx, channel)
         except discord.errors.ClientException:

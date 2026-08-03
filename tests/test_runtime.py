@@ -9,14 +9,18 @@ import tempfile
 import time
 import unittest
 
+import discord
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from cogs.basic import Basic
 from cogs.listeners import Listeners
+from voicelink.exceptions import VoicelinkException
 from voicelink.ipc.client import IPCClient
 from voicelink.mongodb import MongoDBHandler
-from voicelink.player import Player
+from voicelink.player import Player, connect_channel
 from voicelink.pool import Node, NodePool
 from voicelink.transformer import DEFAULT_DECODER_MAPPING, decode_lavasrc_fields
 
@@ -35,6 +39,282 @@ def import_main_with_test_env():
 
 
 class RuntimeReliabilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_connect_command_accepts_voice_and_stage_channels(self) -> None:
+        channel_parameter = next(
+            parameter
+            for parameter in Basic.connect.app_command.parameters
+            if parameter.name == "channel"
+        )
+
+        self.assertEqual(
+            set(channel_parameter.channel_types),
+            {discord.ChannelType.voice, discord.ChannelType.stage_voice},
+        )
+
+    async def test_connect_command_defers_an_interaction(self) -> None:
+        basic = object.__new__(Basic)
+        ctx = MagicMock()
+        ctx.interaction.response.is_done.return_value = False
+        ctx.defer = AsyncMock()
+        player = SimpleNamespace(channel=MagicMock())
+
+        with (
+            patch(
+                "cogs.basic.voicelink.connect_channel",
+                AsyncMock(return_value=player),
+            ),
+            patch(
+                "cogs.basic.send_localized_message",
+                AsyncMock(),
+            ),
+        ):
+            await Basic.connect.callback(basic, ctx)
+
+        ctx.defer.assert_awaited_once_with()
+
+    async def test_explicit_stage_channel_is_used_for_interaction(self) -> None:
+        class FakeStageChannel:
+            pass
+
+        guild = SimpleNamespace(id=123, me=MagicMock())
+        selected_channel = FakeStageChannel()
+        selected_channel.guild = guild
+        selected_channel.members = []
+        selected_channel.permissions_for = MagicMock(
+            return_value=SimpleNamespace(
+                connect=True,
+                speak=False,
+                mute_members=True,
+            )
+        )
+        player = SimpleNamespace(
+            volume=100,
+            is_ipc_connected=False,
+            channel=selected_channel,
+        )
+        selected_channel.connect = AsyncMock(return_value=player)
+
+        fallback_channel = MagicMock()
+        interaction = SimpleNamespace(
+            guild=guild,
+            user=SimpleNamespace(
+                voice=SimpleNamespace(channel=fallback_channel),
+            ),
+            client=MagicMock(),
+        )
+        interaction.author = interaction.user
+
+        with (
+            patch("voicelink.player.StageChannel", FakeStageChannel),
+            patch("voicelink.player.Player", return_value=MagicMock()),
+            patch.object(
+                MongoDBHandler,
+                "get_settings",
+                AsyncMock(return_value={}),
+            ),
+            patch(
+                "voicelink.player.LangHandler.get_lang",
+                AsyncMock(return_value=["no channel", "no permission"]),
+            ),
+        ):
+            connected_player = await connect_channel(
+                interaction,
+                selected_channel,
+            )
+
+        self.assertIs(connected_player, player)
+        selected_channel.connect.assert_awaited_once()
+        fallback_channel.connect.assert_not_called()
+
+    async def test_stage_channel_requires_moderator_permission(self) -> None:
+        class FakeStageChannel:
+            pass
+
+        guild = SimpleNamespace(id=123, me=MagicMock())
+        channel = FakeStageChannel()
+        channel.guild = guild
+        channel.permissions_for = MagicMock(
+            return_value=SimpleNamespace(
+                connect=True,
+                speak=False,
+                mute_members=False,
+            )
+        )
+        channel.connect = AsyncMock()
+        interaction = SimpleNamespace(
+            guild=guild,
+            user=SimpleNamespace(voice=SimpleNamespace(channel=channel)),
+            client=MagicMock(),
+        )
+
+        with (
+            patch("voicelink.player.StageChannel", FakeStageChannel),
+            patch(
+                "voicelink.player.LangHandler.get_lang",
+                AsyncMock(return_value=["no channel", "no permission"]),
+            ),
+        ):
+            with self.assertRaisesRegex(VoicelinkException, "no permission"):
+                await connect_channel(interaction)
+
+        channel.connect.assert_not_awaited()
+
+    async def test_stage_connect_promotes_bot_to_speaker(self) -> None:
+        class FakeStageChannel:
+            pass
+
+        guild = SimpleNamespace(id=123, name="Guild")
+        channel = FakeStageChannel()
+        channel.id = 456
+        channel.name = "Town Hall"
+        channel.guild = guild
+        voice_state = SimpleNamespace(channel=channel, suppress=True)
+        guild.me = SimpleNamespace(voice=voice_state)
+
+        async def unsuppress(**kwargs) -> None:
+            self.assertEqual(kwargs, {"suppress": False})
+            voice_state.suppress = False
+
+        guild.me.edit = AsyncMock(side_effect=unsuppress)
+        guild.change_voice_state = AsyncMock()
+        player = object.__new__(Player)
+        player._guild = guild
+        player.channel = channel
+        player._node = SimpleNamespace(_players={})
+        player._is_connected = False
+        player._logger = MagicMock()
+
+        with patch("voicelink.player.StageChannel", FakeStageChannel):
+            await player.connect(
+                timeout=1,
+                reconnect=True,
+                self_deaf=False,
+                self_mute=True,
+            )
+
+        guild.change_voice_state.assert_awaited_once_with(
+            channel=channel,
+            self_deaf=True,
+            self_mute=True,
+        )
+        guild.me.edit.assert_awaited_once_with(suppress=False)
+        self.assertIs(player._node._players[guild.id], player)
+        self.assertTrue(player.is_connected)
+
+    async def test_failed_stage_promotion_cleans_up_voice_client(self) -> None:
+        class FakeStageChannel:
+            pass
+
+        guild = SimpleNamespace(id=123)
+        channel = FakeStageChannel()
+        channel.id = 456
+        channel.name = "Town Hall"
+        channel.guild = guild
+        guild.me = SimpleNamespace(
+            voice=SimpleNamespace(channel=channel, suppress=True),
+            edit=AsyncMock(),
+        )
+        guild.change_voice_state = AsyncMock()
+        player = object.__new__(Player)
+        player._guild = guild
+        player.channel = channel
+        player._node = SimpleNamespace(_players={})
+        player._is_connected = False
+        player._logger = MagicMock()
+        player.settings = {"lang": "EN"}
+        player.cleanup = MagicMock()
+
+        with (
+            patch("voicelink.player.StageChannel", FakeStageChannel),
+            patch("voicelink.player.VOICE_STATE_TIMEOUT", 0.001),
+            patch("voicelink.player.VOICE_STATE_POLL_INTERVAL", 0),
+            patch.object(Player, "get_msg", return_value="no permission"),
+        ):
+            with self.assertRaisesRegex(VoicelinkException, "no permission"):
+                await player.connect(
+                    timeout=1,
+                    reconnect=True,
+                    self_deaf=True,
+                    self_mute=False,
+                )
+
+        self.assertEqual(guild.change_voice_state.await_count, 2)
+        guild.change_voice_state.assert_awaited_with(channel=None)
+        player.cleanup.assert_called_once_with()
+        self.assertNotIn(guild.id, player._node._players)
+        self.assertFalse(player.is_connected)
+        self.assertIsNone(player.channel)
+
+    async def test_cancelled_voice_join_cleans_up_before_propagating(self) -> None:
+        guild = SimpleNamespace(id=123, name="Guild")
+        channel = SimpleNamespace(id=456, name="Voice", guild=guild)
+        guild.me = SimpleNamespace(voice=None)
+        guild.change_voice_state = AsyncMock()
+        player = object.__new__(Player)
+        player._guild = guild
+        player.channel = channel
+        player._node = SimpleNamespace(_players={})
+        player._is_connected = False
+        player._logger = MagicMock()
+        player.cleanup = MagicMock()
+
+        task = asyncio.create_task(
+            player.connect(
+                timeout=10,
+                reconnect=True,
+                self_deaf=True,
+                self_mute=False,
+            )
+        )
+        while guild.change_voice_state.await_count == 0:
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        guild.change_voice_state.assert_awaited_with(channel=None)
+        player.cleanup.assert_called_once_with()
+        self.assertNotIn(guild.id, player._node._players)
+        self.assertFalse(player.is_connected)
+        self.assertIsNone(player.channel)
+
+    async def test_connect_transformer_error_gets_localized_reply(self) -> None:
+        main = import_main_with_test_env()
+        bot = object.__new__(main.Vocard)
+        ctx = MagicMock()
+        ctx.interaction = object()
+        ctx.guild = SimpleNamespace(id=123, name="Guild")
+        ctx.command = SimpleNamespace(
+            qualified_name="connect",
+            name="connect",
+        )
+        ctx.reply = AsyncMock()
+        transformer = MagicMock()
+        transformer._error_display_name = "VoiceChannel"
+        error = discord.app_commands.TransformerError(
+            "Town Hall",
+            discord.AppCommandOptionType.channel,
+            transformer,
+        )
+
+        with (
+            patch.object(
+                main.Lang_handler,
+                "get_lang",
+                AsyncMock(return_value="Join a voice or stage channel first."),
+            ),
+            patch.object(main.func.logger, "error") as log_error,
+        ):
+            await bot.on_command_error(ctx, error)
+
+        ctx.reply.assert_awaited_once_with(
+            "Join a voice or stage channel first.",
+            ephemeral=True,
+        )
+        log_error.assert_not_called()
+
     def test_all_lavasrc_sources_use_the_extended_track_decoder(self) -> None:
         for source in (
             "spotify",

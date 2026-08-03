@@ -351,6 +351,17 @@ class Vocard(commands.Bot):
             embed.set_footer(icon_url=ctx.me.display_avatar.url, text=f"More Help: {bot_config.invite_link}")
             return await ctx.reply(embed=embed)
 
+        elif (
+            isinstance(error, discord.app_commands.TransformerError)
+            and ctx.command is not None
+            and ctx.command.qualified_name == "connect"
+            and error.type is discord.AppCommandOptionType.channel
+        ):
+            error = await Lang_handler.get_lang(
+                ctx.guild.id,
+                "voice.connection.noChannel",
+            )
+
         elif not issubclass(error.__class__, VoicelinkException):
             error = await Lang_handler.get_lang(ctx.guild.id, "common.errors.unknown") + bot_config.invite_link
             func.logger.error(f"An unexpected error occurred in the {ctx.command.name} command on the {ctx.guild.name}({ctx.guild.id}).", exc_info=exception)
