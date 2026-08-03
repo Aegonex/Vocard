@@ -28,17 +28,65 @@ import requests
 import zipfile
 import shutil
 import subprocess
+import tempfile
 from io import BytesIO
+
+from dotenv import load_dotenv
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 __version__ = "v2.7.3"
+
+load_dotenv(os.path.join(ROOT_DIR, ".env"), override=False)
 
 # URLs for update and migration
 PYTHON_CMD_NAME = os.path.basename(sys.executable)
 GITHUB_API_URL = "https://api.github.com/repos/ChocoMeow/Vocard/releases/latest"
 VOCARD_URL = "https://github.com/ChocoMeow/Vocard/archive/"
 MIGRATION_SCRIPT_URL = f"https://raw.githubusercontent.com/ChocoMeow/Vocard-Magration/main/{__version__}.py"
-IGNORE_FILES = ["settings.json", "logs", "last-session.json"]
+IGNORE_FILES = [".env", "settings.json", "logs", "last-session.json"]
+CUSTOM_SETTINGS_PATH = None
+
+if custom_settings_file := os.getenv("SETTINGS_FILE"):
+    custom_settings_path = os.path.abspath(
+        custom_settings_file
+        if os.path.isabs(custom_settings_file)
+        else os.path.join(ROOT_DIR, custom_settings_file)
+    )
+    try:
+        relative_settings_path = os.path.relpath(custom_settings_path, ROOT_DIR)
+        if relative_settings_path != os.pardir and not relative_settings_path.startswith(os.pardir + os.sep):
+            path_parts = relative_settings_path.split(os.sep)
+            if len(path_parts) == 1:
+                if relative_settings_path not in IGNORE_FILES:
+                    IGNORE_FILES.append(relative_settings_path)
+            else:
+                CUSTOM_SETTINGS_PATH = custom_settings_path
+    except ValueError:
+        pass
+
+
+def backup_custom_settings() -> str | None:
+    if not CUSTOM_SETTINGS_PATH or not os.path.isfile(CUSTOM_SETTINGS_PATH):
+        return None
+
+    descriptor, backup_path = tempfile.mkstemp(prefix="vocard-settings-", suffix=".json")
+    os.close(descriptor)
+    shutil.copy2(CUSTOM_SETTINGS_PATH, backup_path)
+    return backup_path
+
+
+def restore_custom_settings(backup_path: str | None) -> None:
+    if not backup_path:
+        return
+
+    try:
+        os.makedirs(os.path.dirname(CUSTOM_SETTINGS_PATH), exist_ok=True)
+        shutil.copy2(backup_path, CUSTOM_SETTINGS_PATH)
+    except Exception:
+        print(f"{bcolors.FAIL}Could not restore custom settings. Backup: {backup_path}{bcolors.ENDC}")
+        raise
+    else:
+        os.remove(backup_path)
 
 class bcolors:
     WARNING = '\033[93m'
@@ -101,25 +149,29 @@ def install(response, version):
         
     if user_input.lower() in ["y", "yes"]:
         print("Installing ...")
-        zfile = zipfile.ZipFile(BytesIO(response.content))
-        zfile.extractall(ROOT_DIR)
+        settings_backup = backup_custom_settings()
+        try:
+            zfile = zipfile.ZipFile(BytesIO(response.content))
+            zfile.extractall(ROOT_DIR)
 
-        # Remove 'v' from the version string for folder name.
-        version_without_v = version.replace("v", "")
-        source_dir = os.path.join(ROOT_DIR, f"Vocard-{version_without_v}")
-        if os.path.exists(source_dir):
-            for filename in os.listdir(ROOT_DIR):
-                if filename in IGNORE_FILES + [f"Vocard-{version_without_v}"]:
-                    continue
+            # Remove 'v' from the version string for folder name.
+            version_without_v = version.replace("v", "")
+            source_dir = os.path.join(ROOT_DIR, f"Vocard-{version_without_v}")
+            if os.path.exists(source_dir):
+                for filename in os.listdir(ROOT_DIR):
+                    if filename in IGNORE_FILES + [f"Vocard-{version_without_v}"]:
+                        continue
 
-                filename_path = os.path.join(ROOT_DIR, filename)
-                if os.path.isdir(filename_path):
-                    shutil.rmtree(filename_path)
-                else:
-                    os.remove(filename_path)
-            for filename in os.listdir(source_dir):
-                shutil.move(os.path.join(source_dir, filename), os.path.join(ROOT_DIR, filename))
-            os.rmdir(source_dir)
+                    filename_path = os.path.join(ROOT_DIR, filename)
+                    if os.path.isdir(filename_path):
+                        shutil.rmtree(filename_path)
+                    else:
+                        os.remove(filename_path)
+                for filename in os.listdir(source_dir):
+                    shutil.move(os.path.join(source_dir, filename), os.path.join(ROOT_DIR, filename))
+                os.rmdir(source_dir)
+        finally:
+            restore_custom_settings(settings_backup)
         print(f"{bcolors.OKGREEN}Version {version} installed Successfully! Run `{PYTHON_CMD_NAME} main.py` to start your bot{bcolors.ENDC}")
     else:
         print("Update canceled!")

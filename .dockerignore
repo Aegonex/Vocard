@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+settings.json
+last-session.json
+logs
+__pycache__
+*.py[cod]
+.venv
+venv
+.DS_Store

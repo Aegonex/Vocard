@@ -128,14 +128,16 @@ class Vocard(commands.Bot):
             except Exception as e:
                 func.logger.error(f"Cannot connected to dashboard! - Reason: {e}")
 
-        # Update version tracking
-        if not bot_config.version or bot_config.version != update.__version__:
-            await self.tree.sync()
-            func.update_json("settings.json", new_data={"version": update.__version__})
-            
-            for locale_key, values in self.tree.translator.MISSING_TRANSLATOR.items():
-                func.logger.warning(f'Missing translation for "{", ".join(values)}" in "{locale_key}"')
-            self.tree.translator.MISSING_TRANSLATOR.clear()
+        # Keep application commands current without writing runtime state to settings.json.
+        if bot_config.sync_commands_on_startup:
+            try:
+                await self.tree.sync()
+            except discord.HTTPException as e:
+                func.logger.error("Cannot sync application commands.", exc_info=e)
+            else:
+                for locale_key, values in self.tree.translator.MISSING_TRANSLATOR.items():
+                    func.logger.warning(f'Missing translation for "{", ".join(values)}" in "{locale_key}"')
+                self.tree.translator.MISSING_TRANSLATOR.clear()
 
     async def on_ready(self):
         func.logger.info("------------------")
@@ -179,7 +181,7 @@ class Vocard(commands.Bot):
 
         try:
             return await ctx.reply(error, ephemeral=True)
-        except:
+        except discord.HTTPException:
             pass
 
 class CommandCheck(discord.app_commands.CommandTree):
@@ -201,8 +203,10 @@ async def get_prefix(bot: commands.Bot, message: discord.Message) -> str:
     prefix = settings.get("prefix", bot_config.bot_prefix)
     return prefix if prefix is not None else ""
 
-# Loading settings and logger
-bot_config = Config(func.open_json("settings.json"))
+# Load bundled defaults, optional settings.json overrides, and environment variables.
+bot_config = Config.load()
+bot_config.validate()
+bot_config.version = update.__version__
 Lang_handler = LangHandler.init()
 
 LOG_SETTINGS = bot_config.logging

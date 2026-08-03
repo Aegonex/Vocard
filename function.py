@@ -33,25 +33,12 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 logger: logging.Logger = logging.getLogger("vocard")
 
-if not os.path.exists(os.path.join(ROOT_DIR, "settings.json")):
-    raise Exception("Settings file not set!")
-
 def open_json(path: str) -> dict:
     try:
         with open(os.path.join(ROOT_DIR, path), encoding="utf8") as json_file:
             return json.load(json_file)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
-
-def update_json(path: str, new_data: dict) -> None:
-    data = open_json(path)
-    if not data:
-        data = new_data
-    else:
-        data.update(new_data)
-
-    with open(os.path.join(ROOT_DIR, path), "w") as json_file:
-        json.dump(data, json_file, indent=4)
 
 def cooldown_check(ctx: commands.Context) -> Optional[commands.Cooldown]:
     if ctx.author.id in voicelink.Config().bot_access_user:
