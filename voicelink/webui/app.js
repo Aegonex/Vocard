@@ -16,8 +16,7 @@ const ui = {
   shuffle: $("#shuffleButton"), previous: $("#previousButton"), pause: $("#pauseButton"),
   skip: $("#skipButton"), repeat: $("#repeatButton"), repeatMini: $("#repeatMiniButton"),
   queueCount: $("#queueCount"), queueList: $("#queueList"), clear: $("#clearButton"),
-  playForm: $("#playForm"), play: $("#playButton"), search: $("#searchInput"), channelHint: $("#channelHint"),
-  channelHintText: $("#channelHintText"),
+  playForm: $("#playForm"), play: $("#playButton"), search: $("#searchInput"),
   volume: $("#volumeRange"), volumeValue: $("#volumeValue"), autoplay: $("#autoplayToggle"),
   repeatMode: $("#repeatMode"), audioModes: [...document.querySelectorAll("[data-audio-mode]")],
   audioModeHint: $("#audioModeHint"), toast: $("#toast"),
@@ -27,6 +26,7 @@ let adminPassword = sessionStorage.getItem("vocard.adminPassword") || "";
 let snapshot = null;
 let pollTimer = null;
 let toastTimer = null;
+let selectedVoiceChannelId = "";
 
 function notify(message, isError = false) {
   clearTimeout(toastTimer);
@@ -40,6 +40,7 @@ function lock(message = "") {
   clearInterval(pollTimer);
   pollTimer = null;
   snapshot = null;
+  selectedVoiceChannelId = "";
   adminPassword = "";
   sessionStorage.removeItem("vocard.adminPassword");
   ui.appShell.classList.add("hidden");
@@ -75,23 +76,35 @@ function optionList(select, items, selected, emptyLabel) {
   if ([...select.options].some((option) => option.value === previous)) select.value = previous;
 }
 
-function renderChannelAvailability(guild) {
+function voiceChannelOptionList(select, channels, selected, connectedChannelId) {
+  select.replaceChildren();
+  const prompt = new Option(
+    channels.length ? "เลือกห้องที่ต้องการเชื่อมต่อ" : "ไม่มีห้องเสียงที่เชื่อมต่อได้",
+    "",
+  );
+  prompt.disabled = true;
+  select.add(prompt);
+
+  for (const channel of channels) {
+    const label = channel.id === connectedChannelId
+      ? `กำลังเล่นเพลงอยู่ห้อง ${channel.name}`
+      : channel.name;
+    select.add(new Option(label, channel.id));
+  }
+
+  let target = "";
+  if (channels.some((channel) => channel.id === selected)) target = selected;
+  else if (channels.some((channel) => channel.id === connectedChannelId)) {
+    target = connectedChannelId;
+  }
+  select.value = target;
+}
+
+function renderVoiceConnection(guild) {
   const channel = guild?.voiceChannels.find((item) => item.id === ui.channel.value);
   const connected = channel?.status === "connected";
-  ui.channelHint.classList.toggle("available", Boolean(channel && !connected));
-  ui.channelHint.classList.toggle("connected", connected);
   ui.connect.disabled = !channel || connected;
   ui.connect.textContent = connected ? "CONNECTED ✓" : "CONNECT ↗";
-
-  if (!channel) {
-    ui.channelHintText.textContent = "เลือก Voice channel ก่อนเปิดเพลง";
-  } else if (connected) {
-    ui.channelHintText.textContent = `เชื่อมต่อแล้ว · บอทอยู่ในห้องนี้ · ${channel.listeners} คนฟัง`;
-  } else if (channel.status === "empty") {
-    ui.channelHintText.textContent = "ยังไม่ได้เชื่อมต่อกับห้องนี้ · ห้องว่างและพร้อมใช้งาน";
-  } else {
-    ui.channelHintText.textContent = `ยังไม่ได้เชื่อมต่อกับห้องนี้ · มี ${channel.listeners} คนในห้อง`;
-  }
 }
 
 function serviceStatus(indicator, value, ready) {
@@ -153,6 +166,7 @@ function makeQueueRow(track, index) {
 }
 
 function render(state) {
+  if (snapshot?.player && !state.player) selectedVoiceChannelId = "";
   snapshot = state;
   const { bot, services, guilds, player } = state;
   const desiredGuild = ui.guild.value || state.selectedGuildId;
@@ -168,12 +182,15 @@ function render(state) {
   optionList(ui.guild, guilds, desiredGuild, "No Discord servers");
   const guild = selectedGuild();
   const voiceChannels = guild?.voiceChannels || [];
-  const selectedChannelId = voiceChannels.some((channel) => channel.id === ui.channel.value)
-    ? ui.channel.value
-    : player?.channelId || guild?.playerChannelId;
-  optionList(ui.channel, voiceChannels, selectedChannelId, "No connectable channels");
+  const connectedChannelId = player?.channelId || guild?.playerChannelId || "";
+  voiceChannelOptionList(
+    ui.channel,
+    voiceChannels,
+    selectedVoiceChannelId,
+    connectedChannelId,
+  );
   ui.play.disabled = !ui.channel.value;
-  renderChannelAvailability(guild);
+  renderVoiceConnection(guild);
 
   serviceStatus(ui.discordStatus, ui.discordValue, services.discord);
   serviceStatus(ui.lavalinkStatus, ui.lavalinkValue, services.lavalink);
@@ -297,13 +314,20 @@ ui.togglePassword.addEventListener("click", () => {
   ui.togglePassword.textContent = visible ? "SHOW" : "HIDE";
 });
 ui.logout.addEventListener("click", () => lock());
-ui.guild.addEventListener("change", () => loadState());
+ui.guild.addEventListener("change", () => {
+  selectedVoiceChannelId = "";
+  loadState();
+});
 ui.channel.addEventListener("change", () => {
+  selectedVoiceChannelId = ui.channel.value;
   ui.play.disabled = !ui.channel.value;
-  renderChannelAvailability(selectedGuild());
+  renderVoiceConnection(selectedGuild());
 });
 ui.connect.addEventListener("click", () => action("connect", { voiceChannelId: ui.channel.value }));
-ui.disconnect.addEventListener("click", () => action("disconnect"));
+ui.disconnect.addEventListener("click", () => {
+  selectedVoiceChannelId = "";
+  action("disconnect");
+});
 ui.playForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = ui.search.value.trim();

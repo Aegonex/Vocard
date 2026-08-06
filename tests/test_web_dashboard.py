@@ -56,6 +56,7 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ADMIN PASSWORD", html)
         self.assertIn('data-audio-mode="nightcore"', html)
         self.assertIn('data-audio-mode="8d"', html)
+        self.assertNotIn('id="channelHint"', html)
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
 
     async def test_api_requires_the_admin_password(self) -> None:
@@ -107,15 +108,15 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channels[1]["status"], "available")
         self.assertFalse(channels[1]["isBotConnected"])
 
-    async def test_dashboard_script_separates_voice_connection_status(self) -> None:
+    async def test_dashboard_script_uses_voice_channel_select_status(self) -> None:
         response = await self.client.get("/assets/app.js")
         script = await response.text()
 
         self.assertEqual(response.status, 200)
-        self.assertIn("ยังไม่ได้เชื่อมต่อกับห้องนี้", script)
-        self.assertIn("เชื่อมต่อแล้ว · บอทอยู่ในห้องนี้", script)
+        self.assertIn("เลือกห้องที่ต้องการเชื่อมต่อ", script)
+        self.assertIn("กำลังเล่นเพลงอยู่ห้อง", script)
         self.assertIn("CONNECTED ✓", script)
-        self.assertNotIn("`${channel.name} ·", script)
+        self.assertNotIn("channelHint", script)
 
     async def test_action_validation_does_not_report_a_guild_id_error(self) -> None:
         self.guild.voice_client = SimpleNamespace()
@@ -336,7 +337,7 @@ class DashboardMusicActionTests(unittest.IsolatedAsyncioTestCase):
             id=456,
             name="Music",
             members=[SimpleNamespace(bot=False), SimpleNamespace(bot=True)],
-            permissions_for=lambda _: SimpleNamespace(view_channel=True, connect=True),
+            permissions_for=lambda _: SimpleNamespace(view_channel=False, connect=False),
         )]
 
         state = self.dashboard._state_payload(self.bot.guilds[0])

@@ -209,11 +209,12 @@ class WebDashboard:
             channels = []
             for channel in [*guild.voice_channels, *guild.stage_channels]:
                 permissions = channel.permissions_for(bot_member)
-                if permissions.view_channel and permissions.connect:
+                is_bot_connected = bool(
+                    player and player.channel and player.channel.id == channel.id
+                )
+                can_connect = permissions.view_channel and permissions.connect
+                if is_bot_connected or can_connect:
                     listeners = len([member for member in channel.members if not member.bot])
-                    is_bot_connected = bool(
-                        player and player.channel and player.channel.id == channel.id
-                    )
                     channels.append({
                         "id": str(channel.id),
                         "name": channel.name,
