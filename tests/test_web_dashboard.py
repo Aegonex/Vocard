@@ -37,7 +37,7 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
             get_guild=lambda guild_id: guild if guild_id == 123 else None,
         )
         app = web.Application()
-        WebDashboard(self.bot, "a-secure-dashboard-key").register(app)
+        WebDashboard(self.bot, "admin").register(app)
         self.client = TestClient(TestServer(app))
         await self.client.start_server()
 
@@ -47,10 +47,12 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
     async def test_index_is_available_without_exposing_bot_state(self) -> None:
         response = await self.client.get("/")
         self.assertEqual(response.status, 200)
-        self.assertIn("ควบคุมบอท", await response.text())
+        html = await response.text()
+        self.assertIn("ควบคุมบอท", html)
+        self.assertIn("ADMIN PASSWORD", html)
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
 
-    async def test_api_requires_the_instance_access_key(self) -> None:
+    async def test_api_requires_the_admin_password(self) -> None:
         response = await self.client.get("/api/state")
         self.assertEqual(response.status, 401)
         self.assertEqual((await response.json())["code"], "unauthorized")
@@ -58,7 +60,7 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
     async def test_authorized_state_is_scoped_to_one_bot(self) -> None:
         response = await self.client.get(
             "/api/state",
-            headers={"Authorization": "Bearer a-secure-dashboard-key"},
+            headers={"Authorization": "Bearer admin"},
         )
         payload = await response.json()
 

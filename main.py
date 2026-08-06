@@ -126,13 +126,15 @@ class Vocard(commands.Bot):
 
         app = web.Application(client_max_size=16 * 1024)
         app.router.add_get("/health", self._health_check)
-        self.web_dashboard = WebDashboard(
-            self, os.getenv("WEB_DASHBOARD_KEY", "")
+        admin_password = (
+            os.getenv("ADMIN_PASSWORD")
+            or os.getenv("WEB_DASHBOARD_KEY", "")
         )
+        self.web_dashboard = WebDashboard(self, admin_password)
         self.web_dashboard.register(app)
         if not self.web_dashboard.configured:
             func.logger.warning(
-                "WEB_DASHBOARD_KEY is missing or shorter than 16 characters; "
+                "ADMIN_PASSWORD (or legacy WEB_DASHBOARD_KEY) is missing; "
                 "the control panel API is locked."
             )
         runner = web.AppRunner(app, access_log=None)

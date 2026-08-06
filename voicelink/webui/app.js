@@ -2,7 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const ui = {
   loginShell: $("#loginShell"), appShell: $("#appShell"), loginForm: $("#loginForm"),
-  accessKey: $("#accessKey"), loginError: $("#loginError"), toggleKey: $("#toggleKey"),
+  adminPassword: $("#adminPassword"), loginError: $("#loginError"), togglePassword: $("#togglePassword"),
   logout: $("#logoutButton"), botAvatar: $("#botAvatar"), botName: $("#botName"),
   botMeta: $("#botMeta"), botId: $("#botId"), guildCount: $("#guildCount"),
   guild: $("#guildSelect"), channel: $("#channelSelect"), connect: $("#connectButton"),
@@ -21,7 +21,7 @@ const ui = {
   repeatMode: $("#repeatMode"), toast: $("#toast"),
 };
 
-let accessKey = sessionStorage.getItem("vocard.webDashboardKey") || "";
+let adminPassword = sessionStorage.getItem("vocard.adminPassword") || "";
 let snapshot = null;
 let pollTimer = null;
 let toastTimer = null;
@@ -38,28 +38,28 @@ function lock(message = "") {
   clearInterval(pollTimer);
   pollTimer = null;
   snapshot = null;
-  accessKey = "";
-  sessionStorage.removeItem("vocard.webDashboardKey");
+  adminPassword = "";
+  sessionStorage.removeItem("vocard.adminPassword");
   ui.appShell.classList.add("hidden");
   ui.loginShell.classList.remove("hidden");
   ui.loginError.textContent = message;
-  ui.accessKey.value = "";
-  ui.accessKey.focus();
+  ui.adminPassword.value = "";
+  ui.adminPassword.focus();
 }
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     headers: {
-      Authorization: `Bearer ${accessKey}`,
+      Authorization: `Bearer ${adminPassword}`,
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(options.headers || {}),
     },
   });
   const payload = await response.json().catch(() => ({ message: "Invalid server response." }));
   if (response.status === 401) {
-    lock("Access key ไม่ถูกต้อง");
-    throw new Error("Access key ไม่ถูกต้อง");
+    lock("รหัสผ่าน Admin ไม่ถูกต้อง");
+    throw new Error("รหัสผ่าน Admin ไม่ถูกต้อง");
   }
   if (!response.ok) throw new Error(payload.message || `Request failed (${response.status})`);
   return payload;
@@ -206,21 +206,21 @@ async function loadState(silent = false) {
     render(await api(`/api/state${query}`));
     return true;
   } catch (error) {
-    if (!silent && accessKey) notify(error.message, true);
+    if (!silent && adminPassword) notify(error.message, true);
     return false;
   }
 }
 
-async function unlock(key) {
-  accessKey = key.trim();
-  if (!accessKey) return;
+async function unlock(password) {
+  adminPassword = password.trim();
+  if (!adminPassword) return;
   ui.loginError.textContent = "";
   const ok = await loadState(true);
   if (!ok) {
-    if (accessKey) ui.loginError.textContent = "เชื่อมต่อไม่ได้ ตรวจสอบ WEB_DASHBOARD_KEY อีกครั้ง";
+    if (adminPassword) ui.loginError.textContent = "เชื่อมต่อไม่ได้ ตรวจสอบ ADMIN_PASSWORD หรือ WEB_DASHBOARD_KEY อีกครั้ง";
     return;
   }
-  sessionStorage.setItem("vocard.webDashboardKey", accessKey);
+  sessionStorage.setItem("vocard.adminPassword", adminPassword);
   ui.loginShell.classList.add("hidden");
   ui.appShell.classList.remove("hidden");
   clearInterval(pollTimer);
@@ -241,11 +241,11 @@ async function action(name, extra = {}) {
   }
 }
 
-ui.loginForm.addEventListener("submit", (event) => { event.preventDefault(); unlock(ui.accessKey.value); });
-ui.toggleKey.addEventListener("click", () => {
-  const visible = ui.accessKey.type === "text";
-  ui.accessKey.type = visible ? "password" : "text";
-  ui.toggleKey.textContent = visible ? "SHOW" : "HIDE";
+ui.loginForm.addEventListener("submit", (event) => { event.preventDefault(); unlock(ui.adminPassword.value); });
+ui.togglePassword.addEventListener("click", () => {
+  const visible = ui.adminPassword.type === "text";
+  ui.adminPassword.type = visible ? "password" : "text";
+  ui.togglePassword.textContent = visible ? "SHOW" : "HIDE";
 });
 ui.logout.addEventListener("click", () => lock());
 ui.guild.addEventListener("change", () => loadState());
@@ -275,5 +275,5 @@ ui.volume.addEventListener("input", () => { ui.volumeValue.textContent = `${ui.v
 ui.volume.addEventListener("change", () => action("volume", { volume: Number(ui.volume.value) }));
 ui.toast.querySelector("button").addEventListener("click", () => ui.toast.classList.add("hidden"));
 
-if (accessKey) unlock(accessKey);
-else ui.accessKey.focus();
+if (adminPassword) unlock(adminPassword);
+else ui.adminPassword.focus();

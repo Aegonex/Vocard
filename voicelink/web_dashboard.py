@@ -36,15 +36,15 @@ class DashboardError(Exception):
 class WebDashboard:
     """A same-process control panel for one Vocard instance."""
 
-    def __init__(self, bot, access_key: str) -> None:
+    def __init__(self, bot, admin_password: str) -> None:
         self.bot = bot
-        self.access_key = access_key.strip()
+        self.admin_password = admin_password.strip()
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._guild_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     @property
     def configured(self) -> bool:
-        return len(self.access_key) >= 16
+        return bool(self.admin_password)
 
     def register(self, app: web.Application) -> None:
         app.router.add_get("/", self.index)
@@ -75,18 +75,18 @@ class WebDashboard:
             return self._json({
                 "ok": False,
                 "code": "not_configured",
-                "message": "Set WEB_DASHBOARD_KEY (at least 16 characters) first.",
+                "message": "Set ADMIN_PASSWORD or WEB_DASHBOARD_KEY first.",
             }, status=503)
 
         authorization = request.headers.get("Authorization", "")
         scheme, _, supplied = authorization.partition(" ")
         if scheme.lower() != "bearer" or not hmac.compare_digest(
-            supplied.encode(), self.access_key.encode()
+            supplied.encode(), self.admin_password.encode()
         ):
             return self._json({
                 "ok": False,
                 "code": "unauthorized",
-                "message": "Access key is invalid.",
+                "message": "Admin password is invalid.",
             }, status=401)
 
         remote = request.remote or "unknown"
