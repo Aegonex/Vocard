@@ -13,6 +13,7 @@ import discord
 from aiohttp import web
 
 from .enums import LoopType
+from .filters import Filters
 from .mongodb import MongoDBHandler
 from .objects import Playlist
 from .player import Player
@@ -24,6 +25,18 @@ WEBUI_DIR = Path(__file__).with_name("webui")
 ASSET_TYPES = {
     "app.css": "text/css; charset=utf-8",
     "app.js": "application/javascript; charset=utf-8",
+}
+AUDIO_MODE_LABELS = {
+    "normal": "Normal",
+    "karaoke": "Karaoke",
+    "tremolo": "Tremolo",
+    "vibrato": "Vibrato",
+    "rotation": "Rotation",
+    "distortion": "Distortion",
+    "lowpass": "Low Pass",
+    "nightcore": "Nightcore",
+    "vaporwave": "Vaporwave",
+    "8d": "8D Audio",
 }
 
 
@@ -135,14 +148,16 @@ class WebDashboard:
 
         try:
             guild_id = int(data.get("guildId"))
+        except (TypeError, ValueError):
+            return self._json({"ok": False, "message": "A valid guildId is required."}, status=400)
+
+        try:
             guild = self.bot.get_guild(guild_id)
             if guild is None:
                 raise DashboardError("This bot is not in the selected server.", status=404)
 
             async with self._guild_locks[guild_id]:
                 message = await self._run_action(guild, data)
-        except (TypeError, ValueError):
-            return self._json({"ok": False, "message": "A valid guildId is required."}, status=400)
         except DashboardError as exc:
             return self._json({"ok": False, "message": str(exc)}, status=exc.status)
         except Exception as exc:
@@ -214,17 +229,37 @@ class WebDashboard:
 
         player_payload = None
         if selected_guild and (player := selected_guild.voice_client):
+            queue = player.queue.tracks()
+            history = player.queue.history()
+            current = player.current
+            active_filters = [item.tag.lower() for item in player.filters.get_filters()]
+            audio_mode = (
+                "normal" if not active_filters
+                else active_filters[0] if len(active_filters) == 1 and active_filters[0] in AUDIO_MODE_LABELS
+                else "custom"
+            )
             player_payload = {
                 "channelId": str(player.channel.id) if player.channel else None,
                 "channelName": player.channel.name if player.channel else None,
-                "current": self._track_payload(player.current),
-                "queue": [self._track_payload(track) for track in player.queue.tracks()],
+                "current": self._track_payload(current),
+                "queue": [self._track_payload(track) for track in queue],
+                "historyCount": len(history),
                 "position": player.position if player.is_playing else 0,
                 "isPlaying": player.is_playing,
                 "isPaused": player.is_paused,
                 "volume": player.volume,
                 "repeatMode": player.queue.repeat.lower(),
                 "autoplay": player.settings.get("autoplay", False),
+                "audioMode": audio_mode,
+                "activeFilters": active_filters,
+                "capabilities": {
+                    "canPause": bool(current),
+                    "canSkip": bool(current or queue),
+                    "canPrevious": bool(history),
+                    "canShuffle": len(queue) >= 3,
+                    "canClear": bool(queue),
+                    "canSeek": bool(current and not current.is_stream),
+                },
                 "listeners": len([
                     member for member in (player.channel.members if player.channel else [])
                     if not member.bot
@@ -280,6 +315,15 @@ class WebDashboard:
             raise DashboardError("The bot is not connected in this server.")
         return player
 
+    @staticmethod
+    def _integer(value: Any, label: str) -> int:
+        if isinstance(value, bool):
+            raise DashboardError(f"{label} must be a whole number.")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise DashboardError(f"{label} must be a whole number.")
+
     async def _run_action(self, guild, data: dict[str, Any]) -> str:
         action = str(data.get("action", "")).lower()
         requester = guild.me
@@ -314,15 +358,26 @@ class WebDashboard:
         player = self._require_player(guild)
 
         if action == "pause":
-            pause = bool(data.get("pause", True))
+            if player.current is None:
+                raise DashboardError("Nothing is playing right now.")
+            pause = data.get("pause", True)
+            if not isinstance(pause, bool):
+                raise DashboardError("Pause state must be true or false.")
             await player.set_pause(pause, requester)
             return "Playback paused." if pause else "Playback resumed."
         if action == "skip":
+            if player.current is None and not player.queue.tracks():
+                raise DashboardError("There is no track to skip.")
             if player.queue._repeat.mode == LoopType.TRACK:
                 await player.set_repeat(LoopType.OFF, requester)
-            await player.stop()
+            if player.current is not None:
+                await player.stop()
+            else:
+                await player.do_next()
             return "Skipped to the next track."
         if action == "previous":
+            if not player.queue.history():
+                raise DashboardError("There is no previous track.")
             player.queue.backto(2 if player.is_playing else 1)
             if player.is_playing:
                 await player.stop()
@@ -330,40 +385,64 @@ class WebDashboard:
                 await player.do_next()
             return "Returned to the previous track."
         if action == "volume":
-            volume = max(0, min(int(data.get("volume", 100)), 200))
+            volume = self._integer(data.get("volume", 100), "Volume")
+            if not 0 <= volume <= 200:
+                raise DashboardError("Volume must be between 0 and 200.")
             await MongoDBHandler.update_settings(guild.id, {"$set": {"volume": volume}})
             await player.set_volume(volume, requester)
             return f"Volume set to {volume}%."
         if action == "seek":
-            position = int(data.get("position", 0))
+            if player.current is None:
+                raise DashboardError("Nothing is playing right now.")
+            if player.current.is_stream:
+                raise DashboardError("Live streams cannot be seeked.")
+            position = self._integer(data.get("position", 0), "Position")
             await player.seek(position, requester)
             return "Playback position updated."
         if action == "repeat":
             raw_mode = str(data.get("mode", "")).upper()
             mode = LoopType.__members__.get(raw_mode) if raw_mode else None
+            if raw_mode and mode is None:
+                raise DashboardError("Repeat mode must be off, track, or queue.")
             selected = await player.set_repeat(mode, requester)
             return f"Repeat mode: {selected.name.lower()}."
         if action == "autoplay":
-            enabled = bool(data.get("enabled", False))
+            enabled = data.get("enabled", False)
+            if not isinstance(enabled, bool):
+                raise DashboardError("Autoplay state must be true or false.")
             player.settings["autoplay"] = enabled
             await MongoDBHandler.update_settings(guild.id, {"$set": {"autoplay": enabled}})
             if enabled and not player.is_playing:
                 await player.do_next()
             return "Autoplay enabled." if enabled else "Autoplay disabled."
         if action == "shuffle":
+            if len(player.queue.tracks()) < 3:
+                raise DashboardError("Add at least 3 upcoming tracks before shuffling.")
             await player.shuffle("queue", requester)
             return "Queue shuffled."
         if action == "clear":
+            if not player.queue.tracks():
+                return "The upcoming queue is already empty."
             await player.clear_queue("queue", requester)
             return "Upcoming queue cleared."
         if action == "remove":
-            index = int(data.get("index"))
+            index = self._integer(data.get("index"), "Queue index")
             if index < 1:
                 raise DashboardError("Queue index must be positive.")
             removed = await player.remove_track(index, requester=requester)
             if not removed:
                 raise DashboardError("That queue item no longer exists.", status=404)
             return "Track removed from the queue."
+        if action == "audio_mode":
+            mode = str(data.get("mode", "")).strip().lower()
+            factory = Filters.get_available_filters().get(mode)
+            if mode != "normal" and factory is None:
+                raise DashboardError("Select a valid music mode.")
+            if player.filters.get_filters():
+                await player.reset_filter(requester=requester)
+            if factory is not None:
+                await player.add_filter(factory(), requester)
+            return f"Music mode: {AUDIO_MODE_LABELS[mode]}."
         if action == "disconnect":
             await player.teardown()
             return "Disconnected from voice."

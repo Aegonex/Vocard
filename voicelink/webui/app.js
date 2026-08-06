@@ -16,9 +16,10 @@ const ui = {
   shuffle: $("#shuffleButton"), previous: $("#previousButton"), pause: $("#pauseButton"),
   skip: $("#skipButton"), repeat: $("#repeatButton"), repeatMini: $("#repeatMiniButton"),
   queueCount: $("#queueCount"), queueList: $("#queueList"), clear: $("#clearButton"),
-  playForm: $("#playForm"), search: $("#searchInput"), channelHint: $("#channelHint"),
+  playForm: $("#playForm"), play: $("#playButton"), search: $("#searchInput"), channelHint: $("#channelHint"),
   volume: $("#volumeRange"), volumeValue: $("#volumeValue"), autoplay: $("#autoplayToggle"),
-  repeatMode: $("#repeatMode"), toast: $("#toast"),
+  repeatMode: $("#repeatMode"), audioModes: [...document.querySelectorAll("[data-audio-mode]")],
+  audioModeHint: $("#audioModeHint"), toast: $("#toast"),
 };
 
 let adminPassword = sessionStorage.getItem("vocard.adminPassword") || "";
@@ -148,6 +149,7 @@ function render(state) {
   const guild = selectedGuild();
   optionList(ui.channel, guild?.voiceChannels || [], player?.channelId || guild?.playerChannelId, "No connectable channels");
   ui.connect.disabled = !ui.channel.value;
+  ui.play.disabled = !ui.channel.value;
   ui.channelHint.classList.toggle("ready", Boolean(ui.channel.value));
   ui.channelHint.lastChild.textContent = ui.channel.value ? ` พร้อมเชื่อมต่อ ${ui.channel.options[ui.channel.selectedIndex]?.text || "voice"}` : " เลือก Voice channel ก่อนเปิดเพลง";
 
@@ -176,17 +178,26 @@ function render(state) {
   ui.currentTime.textContent = formatTime(player?.position || 0);
   ui.totalTime.textContent = current?.isStream ? "LIVE" : formatTime(current?.length || 0);
 
-  for (const control of [ui.shuffle, ui.previous, ui.pause, ui.skip, ui.repeat, ui.repeatMini, ui.clear, ui.autoplay, ui.volume]) control.disabled = !player;
+  const capabilities = player?.capabilities || {};
+  ui.pause.disabled = !capabilities.canPause;
+  ui.skip.disabled = !capabilities.canSkip;
+  ui.previous.disabled = !capabilities.canPrevious;
+  ui.shuffle.disabled = !capabilities.canShuffle;
+  ui.clear.disabled = !capabilities.canClear;
+  ui.repeat.disabled = !player;
+  ui.repeatMini.disabled = !player;
+  ui.autoplay.disabled = !player;
+  ui.volume.disabled = !player;
   ui.pause.textContent = player?.isPaused ? "▶" : "Ⅱ";
   ui.repeat.classList.toggle("active", Boolean(player && player.repeatMode !== "off"));
   ui.repeatMode.textContent = player?.repeatMode || "off";
   ui.autoplay.classList.toggle("on", Boolean(player?.autoplay));
+  ui.autoplay.setAttribute("aria-pressed", String(Boolean(player?.autoplay)));
   if (document.activeElement !== ui.volume) ui.volume.value = player?.volume ?? 100;
   ui.volumeValue.textContent = `${ui.volume.value}%`;
 
   const queue = player?.queue || [];
   ui.queueCount.textContent = queue.length;
-  ui.clear.disabled = !queue.length;
   ui.queueList.replaceChildren();
   if (queue.length) queue.forEach((track, index) => ui.queueList.append(makeQueueRow(track, index)));
   else {
@@ -198,6 +209,17 @@ function render(state) {
     icon.textContent = "◎"; title.textContent = "คิวยังว่าง"; copy.textContent = "เพลงที่เพิ่มจะแสดงตรงนี้";
     empty.append(icon, title, copy); ui.queueList.append(empty);
   }
+
+  for (const button of ui.audioModes) {
+    const active = Boolean(player && button.dataset.audioMode === player.audioMode);
+    button.disabled = !player;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  const activeMode = player?.audioMode || "normal";
+  ui.audioModeHint.textContent = player
+    ? `โหมดปัจจุบัน: ${activeMode === "custom" ? "Custom (ตั้งจาก Discord)" : activeMode.toUpperCase()}`
+    : "เชื่อมต่อ Voice เพื่อเลือกโหมดเสียง";
 }
 
 async function loadState(silent = false) {
@@ -228,7 +250,10 @@ async function unlock(password) {
 }
 
 async function action(name, extra = {}) {
-  if (!ui.guild.value) return notify("เลือก Discord server ก่อน", true);
+  if (!ui.guild.value) {
+    notify("เลือก Discord server ก่อน", true);
+    return false;
+  }
   try {
     const payload = await api("/api/action", {
       method: "POST",
@@ -236,8 +261,10 @@ async function action(name, extra = {}) {
     });
     if (payload.state) render(payload.state);
     notify(payload.message || "สำเร็จ");
+    return true;
   } catch (error) {
     notify(error.message, true);
+    return false;
   }
 }
 
@@ -251,6 +278,7 @@ ui.logout.addEventListener("click", () => lock());
 ui.guild.addEventListener("change", () => loadState());
 ui.channel.addEventListener("change", () => {
   ui.connect.disabled = !ui.channel.value;
+  ui.play.disabled = !ui.channel.value;
   ui.channelHint.classList.toggle("ready", Boolean(ui.channel.value));
 });
 ui.connect.addEventListener("click", () => action("connect", { voiceChannelId: ui.channel.value }));
@@ -259,8 +287,7 @@ ui.playForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = ui.search.value.trim();
   if (!query) return;
-  await action("play", { query, voiceChannelId: ui.channel.value });
-  ui.search.value = "";
+  if (await action("play", { query, voiceChannelId: ui.channel.value })) ui.search.value = "";
 });
 ui.pause.addEventListener("click", () => action("pause", { pause: !snapshot?.player?.isPaused }));
 ui.skip.addEventListener("click", () => action("skip"));
@@ -273,6 +300,9 @@ ui.autoplay.addEventListener("click", () => action("autoplay", { enabled: !snaps
 ui.position.addEventListener("change", () => action("seek", { position: Number(ui.position.value) }));
 ui.volume.addEventListener("input", () => { ui.volumeValue.textContent = `${ui.volume.value}%`; });
 ui.volume.addEventListener("change", () => action("volume", { volume: Number(ui.volume.value) }));
+for (const button of ui.audioModes) {
+  button.addEventListener("click", () => action("audio_mode", { mode: button.dataset.audioMode }));
+}
 ui.toast.querySelector("button").addEventListener("click", () => ui.toast.classList.add("hidden"));
 
 if (adminPassword) unlock(adminPassword);

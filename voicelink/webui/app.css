@@ -122,6 +122,11 @@ h2 { font-size: 20px; margin: 0; letter-spacing: -.03em; }
 .toggle span { display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: .2s; }
 .toggle.on { border-color: var(--acid); }
 .toggle.on span { transform: translateX(17px); background: var(--acid); }
+.mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mode-button { min-height: 40px; border: 1px solid var(--line); background: #0c0f0d; color: var(--muted); padding: 8px; font-size: 9px; font-weight: 900; letter-spacing: .08em; cursor: pointer; }
+.mode-button:not(:disabled):hover { border-color: var(--acid); color: var(--paper); }
+.mode-button.active { border-color: var(--acid); background: var(--acid-soft); color: var(--acid); box-shadow: inset 0 0 0 1px rgba(200,255,54,.1); }
+.mode-hint { color: var(--muted); font-size: 10px; line-height: 1.5; margin: 14px 0 0; }
 .instance-card dl { margin: 10px 0 0; }
 .instance-card dl div { display: flex; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 11px; }
 .instance-card dt { color: var(--muted); }

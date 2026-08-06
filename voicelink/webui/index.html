@@ -41,7 +41,7 @@
           <img id="botAvatar" alt="">
           <div><strong id="botName">Connecting…</strong><small id="botMeta">Railway instance</small></div>
         </div>
-        <button class="ghost-button" id="logoutButton">LOCK</button>
+        <button class="ghost-button" type="button" id="logoutButton">LOCK</button>
       </header>
 
       <section class="command-strip">
@@ -53,7 +53,7 @@
           <span>VOICE CHANNEL</span>
           <select id="channelSelect" aria-label="Voice channel"></select>
         </label>
-        <button class="connect-button" id="connectButton">CONNECT <span>↗</span></button>
+        <button class="connect-button" type="button" id="connectButton">CONNECT <span>↗</span></button>
       </section>
 
       <section class="status-grid" aria-label="Service status">
@@ -68,7 +68,7 @@
           <article class="now-card">
             <div class="card-heading">
               <div><p class="eyebrow">NOW PLAYING</p><h2 id="channelName">ยังไม่ได้เชื่อม Voice</h2></div>
-              <button class="danger-button" id="disconnectButton" disabled>DISCONNECT</button>
+              <button class="danger-button" type="button" id="disconnectButton" disabled>DISCONNECT</button>
             </div>
 
             <div class="now-body">
@@ -84,11 +84,11 @@
                 <input class="progress" id="positionRange" type="range" min="0" max="1" value="0" disabled aria-label="Track position">
                 <div class="time-row"><span id="currentTime">00:00</span><span id="totalTime">00:00</span></div>
                 <div class="transport">
-                  <button id="shuffleButton" title="Shuffle" disabled>⌘</button>
-                  <button id="previousButton" title="Previous" disabled>◀▮</button>
-                  <button class="play-button" id="pauseButton" title="Pause or resume" disabled>Ⅱ</button>
-                  <button id="skipButton" title="Skip" disabled>▮▶</button>
-                  <button id="repeatButton" title="Repeat" disabled>↻</button>
+                  <button type="button" id="shuffleButton" title="Shuffle" disabled>⌘</button>
+                  <button type="button" id="previousButton" title="Previous" disabled>◀▮</button>
+                  <button class="play-button" type="button" id="pauseButton" title="Pause or resume" disabled>Ⅱ</button>
+                  <button type="button" id="skipButton" title="Skip" disabled>▮▶</button>
+                  <button type="button" id="repeatButton" title="Repeat" disabled>↻</button>
                 </div>
               </div>
             </div>
@@ -97,7 +97,7 @@
           <article class="queue-card">
             <div class="card-heading">
               <div><p class="eyebrow">UP NEXT</p><h2>คิวเพลง <span id="queueCount">0</span></h2></div>
-              <button class="ghost-button" id="clearButton" disabled>CLEAR</button>
+              <button class="ghost-button" type="button" id="clearButton" disabled>CLEAR</button>
             </div>
             <div class="queue-list" id="queueList">
               <div class="empty-state"><span>◎</span><strong>คิวยังว่าง</strong><p>เพลงที่เพิ่มจะแสดงตรงนี้</p></div>
@@ -112,7 +112,7 @@
             <form id="playForm">
               <label for="searchInput">SONG OR URL</label>
               <div class="search-field"><span>⌕</span><input id="searchInput" placeholder="ชื่อเพลง, YouTube, Spotify…" autocomplete="off"></div>
-              <button class="primary-button" type="submit">เพิ่มลงคิว <span>＋</span></button>
+              <button class="primary-button" id="playButton" type="submit">เพิ่มลงคิว <span>＋</span></button>
             </form>
             <p class="channel-hint" id="channelHint"><i></i> เลือก Voice channel ก่อนเปิดเพลง</p>
           </article>
@@ -120,8 +120,26 @@
           <article class="control-card">
             <div class="mixer-heading"><div><p class="eyebrow">MIXER</p><h2>ระดับเสียง</h2></div><strong id="volumeValue">100%</strong></div>
             <div class="volume-row"><span>VOL</span><input id="volumeRange" type="range" min="0" max="200" value="100" disabled></div>
-            <div class="setting-row"><div><strong>Autoplay</strong><small>เล่นเพลงแนะนำต่อ</small></div><button class="toggle" id="autoplayToggle" disabled><span></span></button></div>
-            <div class="setting-row"><div><strong>Repeat mode</strong><small id="repeatMode">off</small></div><button class="mini-button" id="repeatMiniButton" disabled>CHANGE</button></div>
+            <div class="setting-row"><div><strong>Autoplay</strong><small>เล่นเพลงแนะนำต่อ</small></div><button class="toggle" type="button" id="autoplayToggle" aria-pressed="false" disabled><span></span></button></div>
+            <div class="setting-row"><div><strong>Repeat mode</strong><small id="repeatMode">off</small></div><button class="mini-button" type="button" id="repeatMiniButton" disabled>CHANGE</button></div>
+          </article>
+
+          <article class="control-card">
+            <p class="eyebrow">MUSIC MODE</p>
+            <h2>โหมดเสียง</h2>
+            <div class="mode-grid" id="audioModeGrid">
+              <button class="mode-button" type="button" data-audio-mode="normal" disabled>NORMAL</button>
+              <button class="mode-button" type="button" data-audio-mode="nightcore" disabled>NIGHTCORE</button>
+              <button class="mode-button" type="button" data-audio-mode="vaporwave" disabled>VAPORWAVE</button>
+              <button class="mode-button" type="button" data-audio-mode="8d" disabled>8D AUDIO</button>
+              <button class="mode-button" type="button" data-audio-mode="karaoke" disabled>KARAOKE</button>
+              <button class="mode-button" type="button" data-audio-mode="tremolo" disabled>TREMOLO</button>
+              <button class="mode-button" type="button" data-audio-mode="vibrato" disabled>VIBRATO</button>
+              <button class="mode-button" type="button" data-audio-mode="rotation" disabled>ROTATION</button>
+              <button class="mode-button" type="button" data-audio-mode="distortion" disabled>DISTORTION</button>
+              <button class="mode-button" type="button" data-audio-mode="lowpass" disabled>LOW PASS</button>
+            </div>
+            <p class="mode-hint" id="audioModeHint">เชื่อมต่อ Voice เพื่อเลือกโหมดเสียง</p>
           </article>
 
           <article class="instance-card">
@@ -137,7 +155,7 @@
       </section>
     </main>
 
-    <div class="toast hidden" id="toast" role="status"><span>!</span><p></p><button aria-label="Close">×</button></div>
+    <div class="toast hidden" id="toast" role="status"><span>!</span><p></p><button type="button" aria-label="Close">×</button></div>
     <script src="/assets/app.js" defer></script>
   </body>
 </html>
