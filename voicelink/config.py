@@ -639,11 +639,14 @@ class Config:
 
         ipc_host = self.ipc_client.get("host")
         ipc_password = self.ipc_client.get("password")
-        if not isinstance(ipc_host, str) or not ipc_host.strip():
+        ipc_enabled = self.ipc_client.get("enable")
+        if not isinstance(ipc_host, str):
             errors.append("IPC_HOST must be a non-empty string")
+        elif ipc_enabled and not ipc_host.strip():
+            errors.append("IPC_HOST is required when IPC is enabled")
         if not isinstance(ipc_password, str):
             errors.append("IPC_PASSWORD must be a string")
-        elif self.ipc_client.get("enable") and not ipc_password.strip():
+        elif ipc_enabled and not ipc_password.strip():
             errors.append("IPC_PASSWORD is required when IPC is enabled")
 
         if errors:

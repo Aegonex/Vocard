@@ -119,6 +119,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.ipc_client["host"], "127.0.0.1")
         self.assertIn("password", config.ipc_client)
 
+    def test_disabled_ipc_allows_blank_connection_values(self) -> None:
+        with patch.dict(
+            os.environ,
+            self.required_env(
+                IPC_ENABLED="false",
+                IPC_HOST="",
+                IPC_PASSWORD="",
+            ),
+            clear=True,
+        ):
+            config = Config.load("")
+            config.validate()
+
+        self.assertFalse(config.ipc_client["enable"])
+        self.assertEqual(config.ipc_client["host"], "")
+
     def test_nodes_json_takes_precedence_over_single_node_values(self) -> None:
         nodes = {
             "A": {"host": "a", "port": 2333, "password": "a", "secure": False},
