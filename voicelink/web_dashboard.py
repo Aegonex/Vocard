@@ -205,18 +205,28 @@ class WebDashboard:
         guilds = []
         for guild in sorted(self.bot.guilds, key=lambda item: item.name.lower()):
             bot_member = guild.me
+            player = guild.voice_client
             channels = []
             for channel in [*guild.voice_channels, *guild.stage_channels]:
                 permissions = channel.permissions_for(bot_member)
                 if permissions.view_channel and permissions.connect:
+                    listeners = len([member for member in channel.members if not member.bot])
+                    is_bot_connected = bool(
+                        player and player.channel and player.channel.id == channel.id
+                    )
                     channels.append({
                         "id": str(channel.id),
                         "name": channel.name,
                         "kind": "stage" if isinstance(channel, discord.StageChannel) else "voice",
-                        "listeners": len([member for member in channel.members if not member.bot]),
+                        "listeners": listeners,
+                        "status": (
+                            "connected" if is_bot_connected
+                            else "empty" if listeners == 0
+                            else "available"
+                        ),
+                        "isBotConnected": is_bot_connected,
                     })
 
-            player = guild.voice_client
             guilds.append({
                 "id": str(guild.id),
                 "name": guild.name,

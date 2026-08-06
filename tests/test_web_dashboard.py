@@ -75,6 +75,46 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["selectedGuildId"], "123")
         self.assertEqual([guild["id"] for guild in payload["guilds"]], ["123"])
 
+    async def test_empty_voice_channel_is_marked_ready_for_use(self) -> None:
+        permissions_for = MagicMock(
+            return_value=SimpleNamespace(view_channel=True, connect=True)
+        )
+        self.guild.voice_channels = [
+            SimpleNamespace(
+                id=456,
+                name="Empty Room",
+                members=[SimpleNamespace(bot=True)],
+                permissions_for=permissions_for,
+            ),
+            SimpleNamespace(
+                id=789,
+                name="Occupied Room",
+                members=[SimpleNamespace(bot=False)],
+                permissions_for=permissions_for,
+            ),
+        ]
+
+        response = await self.client.get(
+            "/api/state",
+            headers={"Authorization": "Bearer admin"},
+        )
+        channels = (await response.json())["guilds"][0]["voiceChannels"]
+
+        self.assertEqual(channels[0]["listeners"], 0)
+        self.assertEqual(channels[0]["status"], "empty")
+        self.assertFalse(channels[0]["isBotConnected"])
+        self.assertEqual(channels[1]["listeners"], 1)
+        self.assertEqual(channels[1]["status"], "available")
+        self.assertFalse(channels[1]["isBotConnected"])
+
+    async def test_dashboard_script_includes_voice_channel_status_labels(self) -> None:
+        response = await self.client.get("/assets/app.js")
+        script = await response.text()
+
+        self.assertEqual(response.status, 200)
+        self.assertIn("ว่าง · พร้อมใช้งาน", script)
+        self.assertIn("บอทเชื่อมอยู่", script)
+
     async def test_action_validation_does_not_report_a_guild_id_error(self) -> None:
         self.guild.voice_client = SimpleNamespace()
         response = await self.client.post(
@@ -290,12 +330,23 @@ class DashboardMusicActionTests(unittest.IsolatedAsyncioTestCase):
     def test_state_exposes_music_mode_and_button_capabilities(self) -> None:
         nightcore = Filters.get_available_filters()["nightcore"]()
         self.player.filters.add_filter(filter=nightcore)
+        self.bot.guilds[0].voice_channels = [SimpleNamespace(
+            id=456,
+            name="Music",
+            members=[SimpleNamespace(bot=False), SimpleNamespace(bot=True)],
+            permissions_for=lambda _: SimpleNamespace(view_channel=True, connect=True),
+        )]
 
-        payload = self.dashboard._state_payload(self.bot.guilds[0])["player"]
+        state = self.dashboard._state_payload(self.bot.guilds[0])
+        payload = state["player"]
+        channel = state["guilds"][0]["voiceChannels"][0]
 
         self.assertEqual(payload["audioMode"], "nightcore")
         self.assertEqual(payload["historyCount"], 1)
         self.assertEqual(payload["activeFilters"], ["nightcore"])
+        self.assertEqual(channel["listeners"], 1)
+        self.assertEqual(channel["status"], "connected")
+        self.assertTrue(channel["isBotConnected"])
         self.assertEqual(payload["capabilities"], {
             "canPause": True,
             "canSkip": True,

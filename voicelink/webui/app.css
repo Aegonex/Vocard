@@ -111,6 +111,7 @@ h2 { font-size: 20px; margin: 0; letter-spacing: -.03em; }
 .channel-hint { color: var(--muted); font-size: 11px; margin: 15px 0 0; }
 .channel-hint i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 7px; }
 .channel-hint.ready i { background: var(--acid); box-shadow: 0 0 8px var(--acid); }
+.channel-hint.connected { color: var(--paper); }
 .mixer-heading strong { color: var(--acid); font-size: 25px; }
 .volume-row { display: grid; grid-template-columns: 35px 1fr; align-items: center; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .volume-row span { color: var(--muted); font-size: 10px; }
