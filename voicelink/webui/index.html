@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b0d0c">
+    <meta name="description" content="Vocard per-bot music control panel">
+    <title>Vocard Control Panel</title>
+    <link rel="stylesheet" href="/assets/app.css">
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+
+    <section class="login-shell" id="loginShell">
+      <div class="login-card">
+        <div class="brand-mark" aria-hidden="true"><span>V</span></div>
+        <p class="eyebrow">VOCARD / INSTANCE CONTROL</p>
+        <h1>ควบคุมบอท<br><em>ตัวนี้โดยตรง</em></h1>
+        <p class="login-copy">ใส่ Web Dashboard Key ของ Railway service นี้เพื่อดูสถานะและควบคุมเพลง</p>
+        <form id="loginForm">
+          <label for="accessKey">ACCESS KEY</label>
+          <div class="key-field">
+            <input id="accessKey" type="password" autocomplete="current-password" placeholder="WEB_DASHBOARD_KEY" required>
+            <button class="ghost-button" type="button" id="toggleKey" aria-label="Show access key">SHOW</button>
+          </div>
+          <button class="primary-button" type="submit">เปิด Control Panel <span>→</span></button>
+        </form>
+        <p class="form-error" id="loginError" role="alert"></p>
+        <div class="login-foot"><span></span> Direct connection · No central gateway</div>
+      </div>
+    </section>
+
+    <main class="app-shell hidden" id="appShell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark small" aria-hidden="true"><span>V</span></div>
+          <div><strong>VOCARD</strong><small>PER-BOT CONTROL</small></div>
+        </div>
+        <div class="instance-identity">
+          <span class="live-dot"></span>
+          <img id="botAvatar" alt="">
+          <div><strong id="botName">Connecting…</strong><small id="botMeta">Railway instance</small></div>
+        </div>
+        <button class="ghost-button" id="logoutButton">LOCK</button>
+      </header>
+
+      <section class="command-strip">
+        <label>
+          <span>SERVER</span>
+          <select id="guildSelect" aria-label="Discord server"></select>
+        </label>
+        <label>
+          <span>VOICE CHANNEL</span>
+          <select id="channelSelect" aria-label="Voice channel"></select>
+        </label>
+        <button class="connect-button" id="connectButton">CONNECT <span>↗</span></button>
+      </section>
+
+      <section class="status-grid" aria-label="Service status">
+        <article><i id="discordStatus"></i><div><small>DISCORD</small><strong id="discordValue">Starting</strong></div><em id="latencyValue">— ms</em></article>
+        <article><i id="lavalinkStatus"></i><div><small>LAVALINK</small><strong id="lavalinkValue">Starting</strong></div><em>Shared node</em></article>
+        <article><i id="mongoStatus"></i><div><small>MONGODB</small><strong id="mongoValue">Starting</strong></div><em>Settings</em></article>
+        <article><i id="playerStatus"></i><div><small>PLAYER</small><strong id="playerValue">Idle</strong></div><em id="listenerValue">0 listeners</em></article>
+      </section>
+
+      <section class="workspace">
+        <div class="main-column">
+          <article class="now-card">
+            <div class="card-heading">
+              <div><p class="eyebrow">NOW PLAYING</p><h2 id="channelName">ยังไม่ได้เชื่อม Voice</h2></div>
+              <button class="danger-button" id="disconnectButton" disabled>DISCONNECT</button>
+            </div>
+
+            <div class="now-body">
+              <div class="cover-wrap">
+                <div class="cover-placeholder" id="coverPlaceholder"><span>♫</span></div>
+                <img id="coverImage" class="hidden" alt="">
+                <i class="playing-ring" id="playingRing"></i>
+              </div>
+              <div class="track-copy">
+                <p class="source-label" id="trackSource">VOCARD READY</p>
+                <h3 id="trackTitle">พร้อมรับคำสั่งเพลง</h3>
+                <p id="trackAuthor">เลือกห้องเสียงและค้นหาเพลงเพื่อเริ่มเล่น</p>
+                <input class="progress" id="positionRange" type="range" min="0" max="1" value="0" disabled aria-label="Track position">
+                <div class="time-row"><span id="currentTime">00:00</span><span id="totalTime">00:00</span></div>
+                <div class="transport">
+                  <button id="shuffleButton" title="Shuffle" disabled>⌘</button>
+                  <button id="previousButton" title="Previous" disabled>◀▮</button>
+                  <button class="play-button" id="pauseButton" title="Pause or resume" disabled>Ⅱ</button>
+                  <button id="skipButton" title="Skip" disabled>▮▶</button>
+                  <button id="repeatButton" title="Repeat" disabled>↻</button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="queue-card">
+            <div class="card-heading">
+              <div><p class="eyebrow">UP NEXT</p><h2>คิวเพลง <span id="queueCount">0</span></h2></div>
+              <button class="ghost-button" id="clearButton" disabled>CLEAR</button>
+            </div>
+            <div class="queue-list" id="queueList">
+              <div class="empty-state"><span>◎</span><strong>คิวยังว่าง</strong><p>เพลงที่เพิ่มจะแสดงตรงนี้</p></div>
+            </div>
+          </article>
+        </div>
+
+        <aside class="side-column">
+          <article class="control-card">
+            <p class="eyebrow">QUICK PLAY</p>
+            <h2>เปิดเพลง</h2>
+            <form id="playForm">
+              <label for="searchInput">SONG OR URL</label>
+              <div class="search-field"><span>⌕</span><input id="searchInput" placeholder="ชื่อเพลง, YouTube, Spotify…" autocomplete="off"></div>
+              <button class="primary-button" type="submit">เพิ่มลงคิว <span>＋</span></button>
+            </form>
+            <p class="channel-hint" id="channelHint"><i></i> เลือก Voice channel ก่อนเปิดเพลง</p>
+          </article>
+
+          <article class="control-card">
+            <div class="mixer-heading"><div><p class="eyebrow">MIXER</p><h2>ระดับเสียง</h2></div><strong id="volumeValue">100%</strong></div>
+            <div class="volume-row"><span>VOL</span><input id="volumeRange" type="range" min="0" max="200" value="100" disabled></div>
+            <div class="setting-row"><div><strong>Autoplay</strong><small>เล่นเพลงแนะนำต่อ</small></div><button class="toggle" id="autoplayToggle" disabled><span></span></button></div>
+            <div class="setting-row"><div><strong>Repeat mode</strong><small id="repeatMode">off</small></div><button class="mini-button" id="repeatMiniButton" disabled>CHANGE</button></div>
+          </article>
+
+          <article class="instance-card">
+            <p class="eyebrow">THIS INSTANCE</p>
+            <dl>
+              <div><dt>Bot ID</dt><dd id="botId">—</dd></div>
+              <div><dt>Servers</dt><dd id="guildCount">0</dd></div>
+              <div><dt>Connection</dt><dd>Direct</dd></div>
+              <div><dt>Scope</dt><dd>Single bot</dd></div>
+            </dl>
+          </article>
+        </aside>
+      </section>
+    </main>
+
+    <div class="toast hidden" id="toast" role="status"><span>!</span><p></p><button aria-label="Close">×</button></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

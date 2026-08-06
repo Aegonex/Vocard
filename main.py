@@ -43,6 +43,7 @@ from voicelink import (
     NodePool,
     VoicelinkException,
 )
+from voicelink.web_dashboard import WebDashboard
 from voicelink.utils import dispatch_message
 
 DISCORD_SHUTDOWN_TIMEOUT = 5
@@ -84,6 +85,7 @@ class Vocard(commands.Bot):
         super().__init__(*args, **kwargs)
 
         self.ipc_client: IPCClient | None = None
+        self.web_dashboard: WebDashboard | None = None
         self._health_runner: web.AppRunner | None = None
         self._vocard_closing = False
 
@@ -122,8 +124,17 @@ class Vocard(commands.Bot):
         if not 1 <= port <= 65535:
             raise ValueError("PORT must be between 1 and 65535.")
 
-        app = web.Application()
+        app = web.Application(client_max_size=16 * 1024)
         app.router.add_get("/health", self._health_check)
+        self.web_dashboard = WebDashboard(
+            self, os.getenv("WEB_DASHBOARD_KEY", "")
+        )
+        self.web_dashboard.register(app)
+        if not self.web_dashboard.configured:
+            func.logger.warning(
+                "WEB_DASHBOARD_KEY is missing or shorter than 16 characters; "
+                "the control panel API is locked."
+            )
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         try:
@@ -133,7 +144,9 @@ class Vocard(commands.Bot):
             raise
 
         self._health_runner = runner
-        func.logger.info("Health server listening on 0.0.0.0:%s/health", port)
+        func.logger.info(
+            "Web control panel and health server listening on 0.0.0.0:%s", port
+        )
 
     async def _connect_mongodb(self) -> None:
         for attempt in range(1, bot_config.dependency_startup_retries + 1):
