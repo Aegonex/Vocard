@@ -49,10 +49,13 @@
           <span>SERVER</span>
           <select id="guildSelect" aria-label="Discord server"></select>
         </label>
-        <label>
-          <span>VOICE CHANNEL</span>
-          <select id="channelSelect" aria-label="Voice channel"></select>
-        </label>
+        <div class="channel-control">
+          <label>
+            <span>VOICE CHANNEL</span>
+            <select id="channelSelect" aria-label="Voice channel"></select>
+          </label>
+          <p class="channel-hint" id="channelHint" aria-live="polite"><i></i><span id="channelHintText">เลือก Voice channel ก่อนเปิดเพลง</span></p>
+        </div>
         <button class="connect-button" type="button" id="connectButton">CONNECT <span>↗</span></button>
       </section>
 
@@ -114,7 +117,6 @@
               <div class="search-field"><span>⌕</span><input id="searchInput" placeholder="ชื่อเพลง, YouTube, Spotify…" autocomplete="off"></div>
               <button class="primary-button" id="playButton" type="submit">เพิ่มลงคิว <span>＋</span></button>
             </form>
-            <p class="channel-hint" id="channelHint"><i></i> <span id="channelHintText">เลือก Voice channel ก่อนเปิดเพลง</span></p>
           </article>
 
           <article class="control-card">

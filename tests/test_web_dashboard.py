@@ -107,13 +107,15 @@ class WebDashboardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channels[1]["status"], "available")
         self.assertFalse(channels[1]["isBotConnected"])
 
-    async def test_dashboard_script_includes_voice_channel_status_labels(self) -> None:
+    async def test_dashboard_script_separates_voice_connection_status(self) -> None:
         response = await self.client.get("/assets/app.js")
         script = await response.text()
 
         self.assertEqual(response.status, 200)
-        self.assertIn("ว่าง · พร้อมใช้งาน", script)
-        self.assertIn("บอทเชื่อมอยู่", script)
+        self.assertIn("ยังไม่ได้เชื่อมต่อกับห้องนี้", script)
+        self.assertIn("เชื่อมต่อแล้ว · บอทอยู่ในห้องนี้", script)
+        self.assertIn("CONNECTED ✓", script)
+        self.assertNotIn("`${channel.name} ·", script)
 
     async def test_action_validation_does_not_report_a_guild_id_error(self) -> None:
         self.guild.voice_client = SimpleNamespace()

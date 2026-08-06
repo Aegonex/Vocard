@@ -75,25 +75,22 @@ function optionList(select, items, selected, emptyLabel) {
   if ([...select.options].some((option) => option.value === previous)) select.value = previous;
 }
 
-function voiceChannelLabel(channel) {
-  if (channel.status === "connected") return `${channel.name} · บอทเชื่อมอยู่`;
-  if (channel.status === "empty") return `${channel.name} · ว่าง · พร้อมใช้งาน`;
-  return `${channel.name} · พร้อมใช้งาน · ${channel.listeners} คน`;
-}
-
 function renderChannelAvailability(guild) {
   const channel = guild?.voiceChannels.find((item) => item.id === ui.channel.value);
-  ui.channelHint.classList.toggle("ready", Boolean(channel));
-  ui.channelHint.classList.toggle("connected", channel?.status === "connected");
+  const connected = channel?.status === "connected";
+  ui.channelHint.classList.toggle("available", Boolean(channel && !connected));
+  ui.channelHint.classList.toggle("connected", connected);
+  ui.connect.disabled = !channel || connected;
+  ui.connect.textContent = connected ? "CONNECTED ✓" : "CONNECT ↗";
 
   if (!channel) {
     ui.channelHintText.textContent = "เลือก Voice channel ก่อนเปิดเพลง";
-  } else if (channel.status === "connected") {
-    ui.channelHintText.textContent = `บอทเชื่อมอยู่ · ${channel.listeners} คนฟัง`;
+  } else if (connected) {
+    ui.channelHintText.textContent = `เชื่อมต่อแล้ว · บอทอยู่ในห้องนี้ · ${channel.listeners} คนฟัง`;
   } else if (channel.status === "empty") {
-    ui.channelHintText.textContent = "ห้องว่าง · พร้อมใช้งาน";
+    ui.channelHintText.textContent = "ยังไม่ได้เชื่อมต่อกับห้องนี้ · ห้องว่างและพร้อมใช้งาน";
   } else {
-    ui.channelHintText.textContent = `พร้อมใช้งาน · มี ${channel.listeners} คนในห้อง`;
+    ui.channelHintText.textContent = `ยังไม่ได้เชื่อมต่อกับห้องนี้ · มี ${channel.listeners} คนในห้อง`;
   }
 }
 
@@ -170,15 +167,11 @@ function render(state) {
 
   optionList(ui.guild, guilds, desiredGuild, "No Discord servers");
   const guild = selectedGuild();
-  const voiceChannels = (guild?.voiceChannels || []).map((channel) => ({
-    ...channel,
-    label: voiceChannelLabel(channel),
-  }));
+  const voiceChannels = guild?.voiceChannels || [];
   const selectedChannelId = voiceChannels.some((channel) => channel.id === ui.channel.value)
     ? ui.channel.value
     : player?.channelId || guild?.playerChannelId;
   optionList(ui.channel, voiceChannels, selectedChannelId, "No connectable channels");
-  ui.connect.disabled = !ui.channel.value;
   ui.play.disabled = !ui.channel.value;
   renderChannelAvailability(guild);
 
@@ -306,7 +299,6 @@ ui.togglePassword.addEventListener("click", () => {
 ui.logout.addEventListener("click", () => lock());
 ui.guild.addEventListener("change", () => loadState());
 ui.channel.addEventListener("change", () => {
-  ui.connect.disabled = !ui.channel.value;
   ui.play.disabled = !ui.channel.value;
   renderChannelAvailability(selectedGuild());
 });
