@@ -1,384 +1,830 @@
-const $ = (selector) => document.querySelector(selector);
+(() => {
+  "use strict";
 
-const ui = {
-  loginShell: $("#loginShell"), appShell: $("#appShell"), loginForm: $("#loginForm"),
-  adminPassword: $("#adminPassword"), loginError: $("#loginError"), togglePassword: $("#togglePassword"),
-  logout: $("#logoutButton"), botAvatar: $("#botAvatar"), botName: $("#botName"),
-  botMeta: $("#botMeta"), botId: $("#botId"), guildCount: $("#guildCount"),
-  guild: $("#guildSelect"), channel: $("#channelSelect"), connect: $("#connectButton"),
-  discordStatus: $("#discordStatus"), lavalinkStatus: $("#lavalinkStatus"), mongoStatus: $("#mongoStatus"),
-  discordValue: $("#discordValue"), lavalinkValue: $("#lavalinkValue"), mongoValue: $("#mongoValue"),
-  latency: $("#latencyValue"), playerStatus: $("#playerStatus"), playerValue: $("#playerValue"),
-  listeners: $("#listenerValue"), channelName: $("#channelName"), disconnect: $("#disconnectButton"),
-  cover: $("#coverImage"), coverPlaceholder: $("#coverPlaceholder"), playingRing: $("#playingRing"),
-  trackSource: $("#trackSource"), trackTitle: $("#trackTitle"), trackAuthor: $("#trackAuthor"),
-  position: $("#positionRange"), currentTime: $("#currentTime"), totalTime: $("#totalTime"),
-  shuffle: $("#shuffleButton"), previous: $("#previousButton"), pause: $("#pauseButton"),
-  skip: $("#skipButton"), repeat: $("#repeatButton"), repeatMini: $("#repeatMiniButton"),
-  queueCount: $("#queueCount"), queueList: $("#queueList"), clear: $("#clearButton"),
-  playForm: $("#playForm"), play: $("#playButton"), search: $("#searchInput"),
-  volume: $("#volumeRange"), volumeValue: $("#volumeValue"), autoplay: $("#autoplayToggle"),
-  repeatMode: $("#repeatMode"), audioModes: [...document.querySelectorAll("[data-audio-mode]")],
-  audioModeHint: $("#audioModeHint"), toast: $("#toast"),
-};
+  const $ = (id) => document.getElementById(id);
+  const STORE = { password: "vocard.admin", guild: "vocard.guild", user: "vocard.userId" };
 
-let adminPassword = sessionStorage.getItem("vocard.adminPassword") || "";
-let snapshot = null;
-let pollTimer = null;
-let toastTimer = null;
-let selectedVoiceChannelId = "";
-const busy = { play: false, connect: false };
+  let password = localStorage.getItem(STORE.password) || "";
+  let state = null;
+  let selectedGuildId = localStorage.getItem(STORE.guild) || "";
+  let pollTimer = null;
+  let seeking = false;
+  let volumeDragging = false;
+  let positionBase = 0;
+  let positionStamp = 0;
+  let playlistUserId = localStorage.getItem(STORE.user) || "";
+  let playlistData = null;
+  let selectedPlaylistId = null;
 
-function notify(message, isError = false) {
-  clearTimeout(toastTimer);
-  ui.toast.querySelector("p").textContent = message;
-  ui.toast.querySelector("span").textContent = isError ? "!" : "✓";
-  ui.toast.classList.remove("hidden");
-  toastTimer = setTimeout(() => ui.toast.classList.add("hidden"), 4500);
-}
+  const SETTING_STATE_KEYS = {
+    play_forever: "playForever",
+    bypass_vote: "bypassVote",
+    controller: "controller",
+    controller_msg: "controllerMsg",
+    duplicate_track: "duplicateTrack",
+    silent_msg: "silentMsg",
+  };
+  const CHANNEL_STATUS = {
+    connected: "กำลังเล่นเพลงอยู่ห้องนี้",
+    empty: "ว่าง",
+    available: "มีคนฟังอยู่",
+  };
+  const REPEAT_NEXT = { off: "track", track: "queue", queue: "off" };
+  const REPEAT_LABEL = { off: "ปิด", track: "เพลงนี้", queue: "ทั้งคิว" };
 
-function lock(message = "") {
-  clearInterval(pollTimer);
-  pollTimer = null;
-  snapshot = null;
-  selectedVoiceChannelId = "";
-  adminPassword = "";
-  sessionStorage.removeItem("vocard.adminPassword");
-  ui.appShell.classList.add("hidden");
-  ui.loginShell.classList.remove("hidden");
-  ui.loginError.textContent = message;
-  ui.adminPassword.value = "";
-  ui.adminPassword.focus();
-}
+  const ICON_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+  const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${adminPassword}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {}),
-    },
-  });
-  const payload = await response.json().catch(() => ({ message: "Invalid server response." }));
-  if (response.status === 401) {
-    lock("รหัสผ่าน Admin ไม่ถูกต้อง");
-    throw new Error("รหัสผ่าน Admin ไม่ถูกต้อง");
-  }
-  if (!response.ok) throw new Error(payload.message || `Request failed (${response.status})`);
-  return payload;
-}
+  // ---------------------------------------------------------------- utilities
 
-function optionList(select, items, selected, emptyLabel) {
-  const previous = selected || select.value;
-  select.replaceChildren();
-  if (!items.length) select.add(new Option(emptyLabel, ""));
-  for (const item of items) select.add(new Option(item.label || item.name, item.id));
-  if ([...select.options].some((option) => option.value === previous)) select.value = previous;
-}
-
-function voiceChannelOptionList(select, channels, selected, connectedChannelId) {
-  select.replaceChildren();
-  const prompt = new Option(
-    channels.length ? "เลือกห้องที่ต้องการเชื่อมต่อ" : "ไม่มีห้องเสียงที่เชื่อมต่อได้",
-    "",
-  );
-  prompt.disabled = true;
-  select.add(prompt);
-
-  for (const channel of channels) {
-    const label = channel.id === connectedChannelId
-      ? `กำลังเล่นเพลงอยู่ห้อง ${channel.name}`
-      : channel.name;
-    select.add(new Option(label, channel.id));
+  function esc(value) {
+    return String(value == null ? "" : value)
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
   }
 
-  let target = "";
-  if (channels.some((channel) => channel.id === selected)) target = selected;
-  else if (channels.some((channel) => channel.id === connectedChannelId)) {
-    target = connectedChannelId;
-  }
-  select.value = target;
-}
-
-function renderVoiceConnection(guild) {
-  if (busy.connect) {
-    ui.connect.disabled = true;
-    ui.connect.textContent = "CONNECTING…";
-    return;
-  }
-  const channel = guild?.voiceChannels.find((item) => item.id === ui.channel.value);
-  const connected = channel?.status === "connected";
-  ui.connect.disabled = !channel || connected;
-  ui.connect.textContent = connected ? "CONNECTED ✓" : "CONNECT ↗";
-}
-
-function serviceStatus(indicator, value, ready) {
-  indicator.classList.toggle("ok", Boolean(ready));
-  value.textContent = ready ? "Ready" : "Starting";
-}
-
-function formatTime(milliseconds) {
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "00:00";
-  const seconds = Math.floor(milliseconds / 1000);
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const rest = seconds % 60;
-  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}` : `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
-}
-
-function selectedGuild() {
-  return snapshot?.guilds.find((guild) => guild.id === ui.guild.value) || null;
-}
-
-function makeQueueRow(track, index) {
-  const row = document.createElement("div");
-  row.className = "queue-row";
-
-  const number = document.createElement("span");
-  number.className = "queue-number";
-  number.textContent = String(index + 1).padStart(2, "0");
-
-  let artwork;
-  if (track.thumbnail) {
-    artwork = document.createElement("img");
-    artwork.src = track.thumbnail;
-    artwork.alt = "";
-  } else {
-    artwork = document.createElement("div");
-    artwork.textContent = "♫";
-  }
-  artwork.className = "queue-art";
-
-  const copy = document.createElement("div");
-  const title = document.createElement("strong");
-  const author = document.createElement("small");
-  title.textContent = track.title;
-  author.textContent = track.author;
-  copy.append(title, author);
-
-  const duration = document.createElement("span");
-  duration.className = "queue-duration";
-  duration.textContent = track.isStream ? "LIVE" : formatTime(track.length);
-
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.textContent = "×";
-  remove.setAttribute("aria-label", `Remove ${track.title}`);
-  remove.addEventListener("click", () => action("remove", { index: index + 1 }));
-
-  row.append(number, artwork, copy, duration, remove);
-  return row;
-}
-
-function render(state) {
-  if (snapshot?.player && !state.player) selectedVoiceChannelId = "";
-  snapshot = state;
-  const { bot, services, guilds, player } = state;
-  const desiredGuild = ui.guild.value || state.selectedGuildId;
-
-  ui.botName.textContent = bot.name;
-  ui.botAvatar.src = bot.avatarUrl;
-  ui.botAvatar.classList.toggle("hidden", !bot.avatarUrl);
-  ui.botMeta.textContent = `${bot.latencyMs} ms · ${bot.guildCount} servers`;
-  ui.botId.textContent = bot.id;
-  ui.guildCount.textContent = bot.guildCount;
-  document.title = `${bot.name} · Vocard Control`;
-
-  optionList(ui.guild, guilds, desiredGuild, "No Discord servers");
-  const guild = selectedGuild();
-  const voiceChannels = guild?.voiceChannels || [];
-  const connectedChannelId = player?.channelId || guild?.playerChannelId || "";
-  voiceChannelOptionList(
-    ui.channel,
-    voiceChannels,
-    selectedVoiceChannelId,
-    connectedChannelId,
-  );
-  ui.play.disabled = !ui.channel.value || busy.play;
-  renderVoiceConnection(guild);
-
-  serviceStatus(ui.discordStatus, ui.discordValue, services.discord);
-  serviceStatus(ui.lavalinkStatus, ui.lavalinkValue, services.lavalink);
-  serviceStatus(ui.mongoStatus, ui.mongoValue, services.mongodb);
-  ui.latency.textContent = `${bot.latencyMs} ms`;
-  ui.playerStatus.classList.toggle("ok", Boolean(player));
-  ui.playerValue.textContent = player ? (player.isPaused ? "Paused" : "Active") : "Idle";
-  ui.listeners.textContent = `${player?.listeners || 0} listeners`;
-
-  const current = player?.current;
-  ui.channelName.textContent = player?.channelName || "ยังไม่ได้เชื่อม Voice";
-  ui.disconnect.disabled = !player;
-  ui.trackSource.textContent = current?.source || "VOCARD READY";
-  ui.trackTitle.textContent = current?.title || "พร้อมรับคำสั่งเพลง";
-  ui.trackAuthor.textContent = current?.author || "เลือกห้องเสียงและค้นหาเพลงเพื่อเริ่มเล่น";
-  ui.cover.classList.toggle("hidden", !current?.thumbnail);
-  ui.coverPlaceholder.classList.toggle("hidden", Boolean(current?.thumbnail));
-  if (current?.thumbnail) ui.cover.src = current.thumbnail;
-  ui.playingRing.classList.toggle("paused", !player || player.isPaused || !player.isPlaying);
-
-  ui.position.disabled = !current || current.isStream;
-  ui.position.max = Math.max(current?.length || 1, 1);
-  if (document.activeElement !== ui.position) ui.position.value = Math.min(player?.position || 0, current?.length || 1);
-  ui.currentTime.textContent = formatTime(player?.position || 0);
-  ui.totalTime.textContent = current?.isStream ? "LIVE" : formatTime(current?.length || 0);
-
-  const capabilities = player?.capabilities || {};
-  ui.pause.disabled = !capabilities.canPause;
-  ui.skip.disabled = !capabilities.canSkip;
-  ui.previous.disabled = !capabilities.canPrevious;
-  ui.shuffle.disabled = !capabilities.canShuffle;
-  ui.clear.disabled = !capabilities.canClear;
-  ui.repeat.disabled = !player;
-  ui.repeatMini.disabled = !player;
-  ui.autoplay.disabled = !player;
-  ui.volume.disabled = !player;
-  ui.pause.textContent = player?.isPaused ? "▶" : "Ⅱ";
-  ui.repeat.classList.toggle("active", Boolean(player && player.repeatMode !== "off"));
-  ui.repeatMode.textContent = player?.repeatMode || "off";
-  ui.autoplay.classList.toggle("on", Boolean(player?.autoplay));
-  ui.autoplay.setAttribute("aria-pressed", String(Boolean(player?.autoplay)));
-  if (document.activeElement !== ui.volume) ui.volume.value = player?.volume ?? 100;
-  ui.volumeValue.textContent = `${ui.volume.value}%`;
-
-  const queue = player?.queue || [];
-  ui.queueCount.textContent = queue.length;
-  ui.queueList.replaceChildren();
-  if (queue.length) queue.forEach((track, index) => ui.queueList.append(makeQueueRow(track, index)));
-  else {
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    const icon = document.createElement("span");
-    const title = document.createElement("strong");
-    const copy = document.createElement("p");
-    icon.textContent = "◎"; title.textContent = "คิวยังว่าง"; copy.textContent = "เพลงที่เพิ่มจะแสดงตรงนี้";
-    empty.append(icon, title, copy); ui.queueList.append(empty);
+  function fmt(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "00:00";
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const mm = String(m).padStart(2, "0");
+    const ss = String(s).padStart(2, "0");
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
   }
 
-  for (const button of ui.audioModes) {
-    const active = Boolean(player && button.dataset.audioMode === player.audioMode);
-    button.disabled = !player;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
+  function paint(input) {
+    const min = Number(input.min) || 0;
+    const max = Number(input.max) || 100;
+    const ratio = max > min ? ((Number(input.value) - min) / (max - min)) * 100 : 0;
+    input.style.setProperty("--fill", `${ratio}%`);
   }
-  const activeMode = player?.audioMode || "normal";
-  ui.audioModeHint.textContent = player
-    ? `โหมดปัจจุบัน: ${activeMode === "custom" ? "Custom (ตั้งจาก Discord)" : activeMode.toUpperCase()}`
-    : "เชื่อมต่อ Voice เพื่อเลือกโหมดเสียง";
-}
 
-async function loadState(silent = false) {
-  try {
-    const query = ui.guild.value ? `?guildId=${encodeURIComponent(ui.guild.value)}` : "";
-    render(await api(`/api/state${query}`));
-    return true;
-  } catch (error) {
-    if (!silent && adminPassword) notify(error.message, true);
-    return false;
+  let toastTimer = null;
+  function toast(message, isError = false) {
+    const el = $("toast");
+    el.textContent = message;
+    el.classList.toggle("error", isError);
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 2600);
   }
-}
 
-async function unlock(password) {
-  adminPassword = password.trim();
-  if (!adminPassword) return;
-  ui.loginError.textContent = "";
-  const ok = await loadState(true);
-  if (!ok) {
-    if (adminPassword) ui.loginError.textContent = "เชื่อมต่อไม่ได้ ตรวจสอบ ADMIN_PASSWORD หรือ WEB_DASHBOARD_KEY อีกครั้ง";
-    return;
+  function headers(extra) {
+    return Object.assign({ Authorization: `Bearer ${password}` }, extra || {});
   }
-  sessionStorage.setItem("vocard.adminPassword", adminPassword);
-  ui.loginShell.classList.add("hidden");
-  ui.appShell.classList.remove("hidden");
-  clearInterval(pollTimer);
-  pollTimer = setInterval(() => loadState(true), 3000);
-}
 
-async function action(name, extra = {}) {
-  if (!ui.guild.value) {
-    notify("เลือก Discord server ก่อน", true);
-    return false;
+  function currentGuild() {
+    if (!state) return null;
+    return state.guilds.find((g) => g.id === state.selectedGuildId) || null;
   }
-  try {
-    const payload = await api("/api/action", {
-      method: "POST",
-      body: JSON.stringify({ action: name, guildId: ui.guild.value, ...extra }),
+
+  // ---------------------------------------------------------------- api layer
+
+  async function fetchState() {
+    const query = selectedGuildId ? `?guildId=${encodeURIComponent(selectedGuildId)}` : "";
+    const response = await fetch(`/api/state${query}`, { headers: headers() });
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) throw { auth: true };
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "โหลดสถานะไม่สำเร็จ");
+    return payload;
+  }
+
+  async function doAction(body, { silent = false } = {}) {
+    if (!state || !state.selectedGuildId) {
+      toast("ยังไม่ได้เลือกเซิร์ฟเวอร์", true);
+      return null;
+    }
+    body.guildId = state.selectedGuildId;
+    try {
+      const response = await fetch("/api/action", {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) { lock(); return null; }
+      if (!response.ok || !payload.ok) {
+        toast(payload.message || "ทำรายการไม่สำเร็จ", true);
+        return null;
+      }
+      if (payload.state) { state = payload.state; render(); }
+      if (!silent && payload.message) toast(payload.message);
+      return payload;
+    } catch (err) {
+      toast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", true);
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------- rendering
+
+  function render() {
+    if (!state) return;
+    renderBot();
+    renderToolbar();
+    renderPlayerPanel();
+    renderBar();
+    renderEffects();
+    renderSettings();
+  }
+
+  function renderBot() {
+    const services = state.services || {};
+    const healthy = services.status === "ok";
+    $("botName").textContent = state.bot.name;
+    const mode = state.commandsEnabled ? "" : " · เว็บเท่านั้น";
+    $("botMeta").textContent = `${state.bot.latencyMs} ms · ${state.bot.guildCount} เซิร์ฟเวอร์${mode}`;
+    $("botDot").classList.toggle("ok", healthy);
+    const avatar = $("botAvatar");
+    if (state.bot.avatarUrl && avatar.src !== state.bot.avatarUrl) avatar.src = state.bot.avatarUrl;
+  }
+
+  function renderToolbar() {
+    const guildSelect = $("guildSelect");
+    if (document.activeElement !== guildSelect) {
+      guildSelect.innerHTML = state.guilds.map((g) =>
+        `<option value="${esc(g.id)}"${g.id === state.selectedGuildId ? " selected" : ""}>${esc(g.name)}</option>`
+      ).join("");
+    }
+
+    const guild = currentGuild();
+    const channelSelect = $("channelSelect");
+    if (document.activeElement !== channelSelect) {
+      const previous = channelSelect.value;
+      const options = ['<option value="">เลือกห้องที่ต้องการเชื่อมต่อ</option>'];
+      for (const channel of (guild ? guild.voiceChannels : [])) {
+        const status = channel.status === "available"
+          ? `มีคนฟัง ${channel.listeners} คน`
+          : CHANNEL_STATUS[channel.status] || "";
+        const kind = channel.kind === "stage" ? "STAGE" : "VOICE";
+        options.push(
+          `<option value="${esc(channel.id)}">${esc(channel.name)} [${kind}] - ${esc(status)}</option>`
+        );
+      }
+      channelSelect.innerHTML = options.join("");
+      const keep = guild && guild.voiceChannels.some((c) => c.id === previous);
+      channelSelect.value = keep ? previous
+        : (guild && guild.playerChannelId ? guild.playerChannelId : "");
+    }
+  }
+
+  function trackRow(track, index, action) {
+    const requester = track.requester ? `ขอโดย ${track.requester}` : "";
+    const button = action === "remove"
+      ? `<button class="act" data-remove="${index + 1}" title="ลบออกจากคิว">${ICON_X}</button>`
+      : `<button class="act play" data-replay="${esc(track.id)}" title="เล่นอีกครั้ง">${ICON_PLAY}</button>`;
+    return `<div class="q-row">
+      <span class="idx">${index + 1}</span>
+      <div class="t"><strong>${esc(track.title)} - ${esc(track.author)}</strong><small>${esc(requester)}</small></div>
+      <span class="dur">${track.isStream ? "LIVE" : fmt(track.length)}</span>
+      ${button}
+    </div>`;
+  }
+
+  function renderPlayerPanel() {
+    const player = state.player;
+    const guild = currentGuild();
+    const where = $("whereLine").parentElement;
+
+    if (player && player.channelName) {
+      $("whereLine").textContent =
+        `NOW PLAYING · ${player.channelName.toUpperCase()} · ผู้ฟัง ${player.listeners} คน`;
+      where.classList.add("live");
+    } else {
+      $("whereLine").textContent = guild ? `${guild.name} · ยังไม่ได้เชื่อมต่อห้องเสียง` : "ยังไม่ได้เชื่อมต่อห้องเสียง";
+      where.classList.remove("live");
+    }
+    $("disconnectButton").disabled = !player;
+
+    const current = player && player.current;
+    const cover = $("coverImage");
+    if (current && current.thumbnail) {
+      if (cover.src !== current.thumbnail) cover.src = current.thumbnail;
+      cover.classList.remove("hidden");
+      $("coverIcon").classList.add("hidden");
+    } else {
+      cover.classList.add("hidden");
+      $("coverIcon").classList.remove("hidden");
+    }
+    if (current) {
+      $("trackKicker").textContent = `${current.source} · ขอโดย ${current.requester}`.toUpperCase();
+      $("trackTitle").textContent = current.title;
+      $("trackAuthor").textContent = current.author;
+    } else {
+      $("trackKicker").textContent = "VOCARD READY";
+      $("trackTitle").textContent = player ? "ยังไม่มีเพลงที่กำลังเล่น" : "พร้อมรับคำสั่งเพลง";
+      $("trackAuthor").textContent = player
+        ? "เพิ่มเพลงจากช่องค้นหาด้านขวา" : "เลือกห้องเสียงและกดเชื่อมต่อเพื่อเริ่มเล่น";
+    }
+
+    const queue = player ? player.queue : [];
+    const history = player ? player.history : [];
+    $("tagQueue").textContent = queue.length;
+    $("tagRepeat").textContent = player ? (REPEAT_LABEL[player.repeatMode] || player.repeatMode) : "ปิด";
+    $("tagMode").textContent = player
+      ? (player.audioMode === "custom" ? "Custom" : (player.audioMode || "normal")) : "Normal";
+
+    const totalMs = queue.reduce((sum, t) => sum + (t.isStream ? 0 : t.length || 0), 0);
+    $("queueSummary").textContent = queue.length
+      ? `${queue.length} เพลง · ${fmt(totalMs)}` : "0 เพลง";
+    $("queueList").innerHTML = queue.length
+      ? queue.map((t, i) => trackRow(t, i, "remove")).join("")
+      : '<div class="empty-note">คิวยังว่าง<br>พิมพ์ชื่อเพลงด้านบนเพื่อเพิ่มเพลง</div>';
+
+    $("historyCount").textContent = player && player.historyCount ? `${player.historyCount} เพลง` : "";
+    $("historyList").innerHTML = history.length
+      ? history.map((t, i) => trackRow(t, i, "replay")).join("")
+      : '<div class="empty-note">ยังไม่มีประวัติการเล่น</div>';
+
+    $("clearQueueButton").disabled = !player || !queue.length;
+  }
+
+  function renderBar() {
+    const player = state.player;
+    const current = player && player.current;
+    const capabilities = (player && player.capabilities) || {};
+
+    $("barTitle").textContent = current ? current.title : "ไม่มีเพลงที่กำลังเล่น";
+    $("barAuthor").textContent = current ? current.author : state.bot.name;
+    const thumb = $("barThumbImage");
+    if (current && current.thumbnail) {
+      if (thumb.src !== current.thumbnail) thumb.src = current.thumbnail;
+      thumb.classList.remove("hidden");
+      $("barThumbIcon").classList.add("hidden");
+    } else {
+      thumb.classList.add("hidden");
+      $("barThumbIcon").classList.remove("hidden");
+    }
+
+    $("pauseButton").disabled = !capabilities.canPause;
+    $("skipButton").disabled = !capabilities.canSkip;
+    $("previousButton").disabled = !capabilities.canPrevious;
+    $("shuffleButton").disabled = !capabilities.canShuffle;
+    $("shuffleButton2").disabled = !capabilities.canShuffle;
+    $("repeatButton").disabled = !player;
+    $("autoplayToggle").disabled = !player;
+    $("volumeRange").disabled = !player;
+    $("seekRange").disabled = !capabilities.canSeek;
+
+    const paused = player ? player.isPaused : false;
+    $("iconPause").classList.toggle("hidden", paused || !current);
+    $("iconPlay").classList.toggle("hidden", !(paused || !current));
+
+    const repeat = player ? player.repeatMode : "off";
+    $("repeatButton").classList.toggle("on", repeat !== "off");
+    $("repeatBadge").classList.toggle("hidden", repeat !== "track");
+
+    $("autoplayToggle").classList.toggle("on", Boolean(player && player.autoplay));
+
+    if (!volumeDragging && player) {
+      $("volumeRange").value = player.volume;
+      $("volumeLabel").textContent = `${player.volume}%`;
+      paint($("volumeRange"));
+    }
+
+    positionBase = player ? player.position : 0;
+    positionStamp = Date.now();
+    updateSeekUI();
+  }
+
+  function updateSeekUI() {
+    const player = state && state.player;
+    const current = player && player.current;
+    const seek = $("seekRange");
+    if (!current) {
+      if (!seeking) { seek.value = 0; seek.max = 1; paint(seek); }
+      $("currentTime").textContent = "00:00";
+      $("totalTime").textContent = "00:00";
+      return;
+    }
+    const elapsed = player.isPlaying && !player.isPaused ? Date.now() - positionStamp : 0;
+    const position = Math.min(positionBase + elapsed, current.length || 0);
+    seek.max = current.length || 1;
+    if (!seeking) {
+      seek.value = position;
+      paint(seek);
+      $("currentTime").textContent = fmt(position);
+    }
+    $("totalTime").textContent = current.isStream ? "LIVE" : fmt(current.length);
+  }
+
+  function renderEffects() {
+    const player = state.player;
+    const active = new Set(player ? player.activeFilters : []);
+    document.querySelectorAll("[data-audio-mode]").forEach((button) => {
+      const mode = button.dataset.audioMode;
+      button.disabled = !player;
+      button.classList.toggle(
+        "on",
+        player ? (mode === "normal" ? active.size === 0 : active.has(mode)) : false
+      );
     });
-    if (payload.state) render(payload.state);
-    notify(payload.message || "สำเร็จ");
-    return true;
-  } catch (error) {
-    notify(error.message, true);
-    return false;
+    document.querySelectorAll("[data-effect]").forEach((input) => { input.disabled = !player; });
+    $("clearEffectsButton").disabled = !player || active.size === 0;
+    $("effectHint").textContent = player
+      ? "กดพรีเซ็ตเพื่อสลับโหมด หรือเลื่อนสไลเดอร์เพื่อปรับละเอียด"
+      : "เชื่อมต่อห้องเสียงก่อนจึงจะใช้เอฟเฟกต์ได้";
   }
-}
 
-ui.loginForm.addEventListener("submit", (event) => { event.preventDefault(); unlock(ui.adminPassword.value); });
-ui.togglePassword.addEventListener("click", () => {
-  const visible = ui.adminPassword.type === "text";
-  ui.adminPassword.type = visible ? "password" : "text";
-  ui.togglePassword.textContent = visible ? "SHOW" : "HIDE";
-});
-ui.logout.addEventListener("click", () => lock());
-ui.guild.addEventListener("change", () => {
-  selectedVoiceChannelId = "";
-  loadState();
-});
-ui.channel.addEventListener("change", () => {
-  selectedVoiceChannelId = ui.channel.value;
-  ui.play.disabled = !ui.channel.value || busy.play;
-  renderVoiceConnection(selectedGuild());
-});
-ui.connect.addEventListener("click", async () => {
-  if (busy.connect || !ui.channel.value) return;
-  busy.connect = true;
-  ui.connect.disabled = true;
-  ui.connect.textContent = "CONNECTING…";
-  ui.connect.setAttribute("aria-busy", "true");
-  try {
-    await action("connect", { voiceChannelId: ui.channel.value });
-  } finally {
-    busy.connect = false;
-    ui.connect.removeAttribute("aria-busy");
-    renderVoiceConnection(selectedGuild());
-  }
-});
-ui.disconnect.addEventListener("click", () => {
-  selectedVoiceChannelId = "";
-  action("disconnect");
-});
-ui.playForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const query = ui.search.value.trim();
-  if (!query || busy.play) return;
-  busy.play = true;
-  ui.play.classList.add("loading");
-  ui.play.disabled = true;
-  ui.play.setAttribute("aria-busy", "true");
-  try {
-    if (await action("play", { query, voiceChannelId: ui.channel.value })) ui.search.value = "";
-  } finally {
-    busy.play = false;
-    ui.play.classList.remove("loading");
-    ui.play.removeAttribute("aria-busy");
-    ui.play.disabled = !ui.channel.value;
-  }
-});
-ui.pause.addEventListener("click", () => action("pause", { pause: !snapshot?.player?.isPaused }));
-ui.skip.addEventListener("click", () => action("skip"));
-ui.previous.addEventListener("click", () => action("previous"));
-ui.repeat.addEventListener("click", () => action("repeat"));
-ui.repeatMini.addEventListener("click", () => action("repeat"));
-ui.shuffle.addEventListener("click", () => action("shuffle"));
-ui.clear.addEventListener("click", () => action("clear"));
-ui.autoplay.addEventListener("click", () => action("autoplay", { enabled: !snapshot?.player?.autoplay }));
-ui.position.addEventListener("change", () => action("seek", { position: Number(ui.position.value) }));
-ui.volume.addEventListener("input", () => { ui.volumeValue.textContent = `${ui.volume.value}%`; });
-ui.volume.addEventListener("change", () => action("volume", { volume: Number(ui.volume.value) }));
-for (const button of ui.audioModes) {
-  button.addEventListener("click", () => action("audio_mode", { mode: button.dataset.audioMode }));
-}
-ui.toast.querySelector("button").addEventListener("click", () => ui.toast.classList.add("hidden"));
+  function renderSettings() {
+    const settings = state.settings;
+    const guild = currentGuild();
+    if (!settings) return;
 
-if (adminPassword) unlock(adminPassword);
-else ui.adminPassword.focus();
+    const language = $("setLanguage");
+    if (document.activeElement !== language) {
+      const languages = state.languages && state.languages.length ? state.languages : [settings.language];
+      language.innerHTML = languages.map((lang) =>
+        `<option value="${esc(lang)}"${lang === settings.language ? " selected" : ""}>${esc(lang)}</option>`
+      ).join("");
+    }
+
+    const djRole = $("setDjRole");
+    if (document.activeElement !== djRole && guild) {
+      const options = ['<option value="">ไม่กำหนด</option>'];
+      for (const role of guild.roles) {
+        options.push(
+          `<option value="${esc(role.id)}"${role.id === settings.djRoleId ? " selected" : ""}>${esc(role.name)}</option>`
+        );
+      }
+      djRole.innerHTML = options.join("");
+      djRole.value = settings.djRoleId || "";
+    }
+
+    const queueMode = $("setQueueMode");
+    if (document.activeElement !== queueMode) queueMode.value = settings.queueMode;
+
+    if (document.activeElement !== $("setVolume")) {
+      $("setVolume").value = settings.defaultVolume;
+      $("setVolumeLabel").textContent = `${settings.defaultVolume}%`;
+      paint($("setVolume"));
+    }
+
+    document.querySelectorAll("[data-setting]").forEach((button) => {
+      const key = SETTING_STATE_KEYS[button.dataset.setting];
+      button.classList.toggle("on", Boolean(settings[key]));
+    });
+
+    const requestChannel = $("setRequestChannel");
+    if (document.activeElement !== requestChannel && guild) {
+      const options = ['<option value="">ไม่กำหนด</option>'];
+      for (const channel of guild.textChannels) {
+        options.push(
+          `<option value="${esc(channel.id)}"${channel.id === settings.requestChannelId ? " selected" : ""}># ${esc(channel.name)}</option>`
+        );
+      }
+      requestChannel.innerHTML = options.join("");
+      requestChannel.value = settings.requestChannelId || "";
+    }
+
+    const template = $("setStageTemplate");
+    if (document.activeElement !== template) template.value = settings.stageAnnounceTemplate || "";
+  }
+
+  // ---------------------------------------------------------------- playlists
+
+  async function loadPlaylists(playlistId) {
+    if (!playlistUserId) return;
+    const params = new URLSearchParams({ userId: playlistUserId });
+    if (playlistId) params.set("playlistId", playlistId);
+    try {
+      const response = await fetch(`/api/playlists?${params}`, { headers: headers() });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) { lock(); return; }
+      if (!response.ok || !payload.ok) {
+        toast(payload.message || "โหลดเพลย์ลิสต์ไม่สำเร็จ", true);
+        return;
+      }
+      playlistData = payload;
+      selectedPlaylistId = playlistId || (payload.playlists[0] && payload.playlists[0].id) || null;
+      if (!playlistId && selectedPlaylistId) return loadPlaylists(selectedPlaylistId);
+      renderPlaylists();
+    } catch (err) {
+      toast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", true);
+    }
+  }
+
+  function renderPlaylists() {
+    if (!playlistData) return;
+    $("plWorkspace").classList.remove("hidden");
+    $("plCount").textContent =
+      `${playlistData.playlists.length}/${playlistData.limits.maxPlaylists}`;
+
+    $("plList").innerHTML = playlistData.playlists.map((playlist) => {
+      const badges = [];
+      if (playlist.type === "share") badges.push("แชร์มา");
+      if (playlist.type === "link") badges.push("ลิงก์");
+      if (playlist.locked) badges.push("ล็อก");
+      if (playlist.broken) badges.push("ใช้ไม่ได้");
+      const count = playlist.trackCount == null ? "" : `${playlist.trackCount} เพลง`;
+      return `<button class="list-pick${playlist.id === selectedPlaylistId ? " on" : ""}" data-playlist="${esc(playlist.id)}" type="button">
+        <span>${esc(playlist.name)}</span>
+        <span class="badge-row">${badges.map((b) => `<span class="badge">${b}</span>`).join(" ")}
+        <small>${count}</small></span>
+      </button>`;
+    }).join("");
+
+    const detail = playlistData.detail;
+    $("plDetailName").innerHTML = detail
+      ? `เพลงใน ${esc(detail.name)}<span class="count">${detail.tracks.length} เพลง</span>`
+      : "เพลงในเพลย์ลิสต์";
+    if (detail && detail.type === "link") {
+      $("plTracks").innerHTML =
+        `<div class="empty-note">เพลย์ลิสต์แบบลิงก์<br>${esc(detail.uri || "")}</div>`;
+    } else if (detail && detail.tracks.length) {
+      $("plTracks").innerHTML = detail.tracks.map((track, index) => `<div class="q-row">
+        <span class="idx">${index + 1}</span>
+        <div class="t"><strong>${esc(track.title)} - ${esc(track.author)}</strong></div>
+        <span class="dur">${fmt(track.length)}</span>
+        <span class="act-pair">
+          <button class="act play" data-pl-play-track="${esc(track.id)}" title="เล่นเพลงนี้">${ICON_PLAY}</button>
+          <button class="act" data-pl-remove="${index + 1}" title="ลบออกจากเพลย์ลิสต์">${ICON_X}</button>
+        </span>
+      </div>`).join("");
+    } else {
+      $("plTracks").innerHTML = '<div class="empty-note">เพลย์ลิสต์นี้ยังว่าง</div>';
+    }
+
+    $("inboxCount").textContent = playlistData.inbox.length ? `${playlistData.inbox.length}` : "";
+    $("inboxList").innerHTML = playlistData.inbox.length
+      ? playlistData.inbox.map((mail) => `<div class="inbox-item">
+          <strong>${esc(mail.title)}</strong>
+          <small>${esc(mail.description)}</small>
+          <div class="btn-row">
+            <button class="btn solid" data-inbox-accept="${mail.index}" type="button">รับ</button>
+            <button class="btn danger" data-inbox-decline="${mail.index}" type="button">ปฏิเสธ</button>
+          </div>
+        </div>`).join("")
+      : '<div class="empty-note">ไม่มีคำเชิญ</div>';
+  }
+
+  async function playlistAction(body, reloadDetail = true) {
+    body.userId = playlistUserId;
+    const result = await doAction(body);
+    if (result) await loadPlaylists(reloadDetail ? selectedPlaylistId : null);
+    return result;
+  }
+
+  // ---------------------------------------------------------------- polling
+
+  async function refresh() {
+    try {
+      const payload = await fetchState();
+      state = payload;
+      if (payload.selectedGuildId) {
+        selectedGuildId = payload.selectedGuildId;
+        localStorage.setItem(STORE.guild, selectedGuildId);
+      }
+      render();
+      return true;
+    } catch (err) {
+      if (err && err.auth) { lock(); return false; }
+      return false;
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(() => {
+      if (!document.hidden) refresh();
+    }, 4000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function unlock() {
+    $("loginShell").classList.add("hidden");
+    $("appShell").classList.remove("hidden");
+    startPolling();
+  }
+
+  function lock() {
+    password = "";
+    localStorage.removeItem(STORE.password);
+    stopPolling();
+    $("appShell").classList.add("hidden");
+    $("loginShell").classList.remove("hidden");
+    $("loginError").textContent = "";
+  }
+
+  // ---------------------------------------------------------------- wiring
+
+  $("loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    password = $("adminPassword").value.trim();
+    $("loginError").textContent = "";
+    $("loginButton").disabled = true;
+    const ok = await refresh();
+    $("loginButton").disabled = false;
+    if (ok) {
+      localStorage.setItem(STORE.password, password);
+      unlock();
+    } else {
+      $("loginError").textContent = "รหัสผ่านไม่ถูกต้อง หรือเชื่อมต่อบอทไม่ได้";
+    }
+  });
+
+  $("togglePassword").addEventListener("click", () => {
+    const input = $("adminPassword");
+    const isHidden = input.type === "password";
+    input.type = isHidden ? "text" : "password";
+    $("togglePassword").textContent = isHidden ? "HIDE" : "SHOW";
+  });
+
+  $("lockButton").addEventListener("click", lock);
+
+  document.getElementById("nav").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-tab]");
+    if (!button) return;
+    document.querySelectorAll("#nav button").forEach((b) => b.classList.remove("active"));
+    button.classList.add("active");
+    document.querySelectorAll(".panel").forEach((panel) =>
+      panel.classList.toggle("active", panel.dataset.panel === button.dataset.tab));
+  });
+
+  $("guildSelect").addEventListener("change", () => {
+    selectedGuildId = $("guildSelect").value;
+    localStorage.setItem(STORE.guild, selectedGuildId);
+    refresh();
+  });
+
+  $("connectButton").addEventListener("click", () => {
+    const channelId = $("channelSelect").value;
+    if (!channelId) { toast("เลือกห้องเสียงก่อน", true); return; }
+    doAction({ action: "connect", voiceChannelId: channelId });
+  });
+
+  $("disconnectButton").addEventListener("click", () => doAction({ action: "disconnect" }));
+
+  function queueAdd(mode) {
+    const query = $("queryInput").value.trim();
+    if (!query) { toast("พิมพ์ชื่อเพลงหรือวางลิงก์ก่อน", true); return; }
+    const body = { action: "play", query, mode };
+    const channelId = $("channelSelect").value;
+    if (channelId) body.voiceChannelId = channelId;
+    doAction(body).then((result) => { if (result) $("queryInput").value = ""; });
+  }
+  $("addForm").addEventListener("submit", (event) => { event.preventDefault(); queueAdd("append"); });
+  $("addTopButton").addEventListener("click", () => queueAdd("top"));
+  $("addForceButton").addEventListener("click", () => queueAdd("force"));
+
+  $("clearQueueButton").addEventListener("click", () => doAction({ action: "clear" }));
+  $("shuffleButton").addEventListener("click", () => doAction({ action: "shuffle" }));
+  $("shuffleButton2").addEventListener("click", () => doAction({ action: "shuffle" }));
+  $("pauseButton").addEventListener("click", () => {
+    const paused = state && state.player ? state.player.isPaused : false;
+    doAction({ action: "pause", pause: !paused });
+  });
+  $("skipButton").addEventListener("click", () => doAction({ action: "skip" }));
+  $("previousButton").addEventListener("click", () => doAction({ action: "previous" }));
+  $("repeatButton").addEventListener("click", () => {
+    const mode = state && state.player ? state.player.repeatMode : "off";
+    doAction({ action: "repeat", mode: REPEAT_NEXT[mode] || "off" });
+  });
+  $("autoplayToggle").addEventListener("click", () => {
+    const enabled = Boolean(state && state.player && state.player.autoplay);
+    doAction({ action: "autoplay", enabled: !enabled });
+  });
+
+  $("queueList").addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove]");
+    if (remove) doAction({ action: "remove", index: Number(remove.dataset.remove) });
+  });
+  $("historyList").addEventListener("click", (event) => {
+    const replay = event.target.closest("[data-replay]");
+    if (replay) doAction({ action: "play_encoded", trackId: replay.dataset.replay, mode: "append" });
+  });
+
+  $("exportButton").addEventListener("click", async () => {
+    const result = await doAction({ action: "queue_export" }, { silent: true });
+    if (!result || !result.data) return;
+    const tracks = result.data.tracks;
+    const total = tracks.reduce((sum, t) => sum + (t.length || 0), 0);
+    const lines = [
+      "!Remember do not change this file!",
+      "------------->Info<-------------",
+      `Guild: ${result.data.guildName}`,
+      "Requester: Web Dashboard",
+      `Tracks: ${tracks.length} - ${fmt(total)}`,
+      "------------>Tracks<------------",
+      ...tracks.map((t, i) => `${i + 1}. ${t.title} [${fmt(t.length)}]`),
+      "----------->Raw Info<-----------",
+      tracks.map((t) => t.id).join(","),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${result.data.guildName}_Full_Queue.txt`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast("ส่งออกคิวแล้ว");
+  });
+
+  $("importButton").addEventListener("click", () => $("importFile").click());
+  $("importFile").addEventListener("change", async () => {
+    const file = $("importFile").files[0];
+    $("importFile").value = "";
+    if (!file) return;
+    const text = await file.text();
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    const last = lines[lines.length - 1] || "";
+    const trackIds = last.split(",").map((item) => item.trim()).filter(Boolean);
+    if (!trackIds.length) { toast("ไม่พบเพลงในไฟล์นี้", true); return; }
+    const body = { action: "queue_import", trackIds };
+    const channelId = $("channelSelect").value;
+    if (channelId) body.voiceChannelId = channelId;
+    doAction(body);
+  });
+
+  // seek + volume
+  $("seekRange").addEventListener("input", () => {
+    seeking = true;
+    $("currentTime").textContent = fmt(Number($("seekRange").value));
+    paint($("seekRange"));
+  });
+  $("seekRange").addEventListener("change", () => {
+    const position = Math.floor(Number($("seekRange").value));
+    seeking = false;
+    doAction({ action: "seek", position }, { silent: true });
+  });
+  $("volumeRange").addEventListener("input", () => {
+    volumeDragging = true;
+    $("volumeLabel").textContent = `${$("volumeRange").value}%`;
+    paint($("volumeRange"));
+  });
+  $("volumeRange").addEventListener("change", () => {
+    volumeDragging = false;
+    doAction({ action: "volume", volume: Number($("volumeRange").value) }, { silent: true });
+  });
+
+  // effects
+  document.querySelectorAll("[data-audio-mode]").forEach((button) => {
+    button.addEventListener("click", () =>
+      doAction({ action: "audio_mode", mode: button.dataset.audioMode }));
+  });
+  document.querySelectorAll("[data-effect]").forEach((input) => {
+    input.addEventListener("input", () => paint(input));
+    input.addEventListener("change", () => {
+      const params = {};
+      params[input.dataset.param] = Number(input.value);
+      doAction({ action: "effect_set", effect: input.dataset.effect, params });
+    });
+    paint(input);
+  });
+  $("clearEffectsButton").addEventListener("click", () => doAction({ action: "effect_clear" }));
+
+  // settings
+  $("setLanguage").addEventListener("change", () =>
+    doAction({ action: "settings_update", field: "language", value: $("setLanguage").value }));
+  $("setDjRole").addEventListener("change", () =>
+    doAction({ action: "settings_update", field: "dj_role", value: $("setDjRole").value || null }));
+  $("setQueueMode").addEventListener("change", () =>
+    doAction({ action: "settings_update", field: "queue_mode", value: $("setQueueMode").value }));
+  $("setVolume").addEventListener("input", () => {
+    $("setVolumeLabel").textContent = `${$("setVolume").value}%`;
+    paint($("setVolume"));
+  });
+  $("setVolume").addEventListener("change", () =>
+    doAction({ action: "settings_update", field: "default_volume", value: Number($("setVolume").value) }));
+  document.querySelectorAll("[data-setting]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = SETTING_STATE_KEYS[button.dataset.setting];
+      const currentValue = Boolean(state && state.settings && state.settings[key]);
+      doAction({ action: "settings_update", field: button.dataset.setting, value: !currentValue });
+    });
+  });
+  $("saveRequestChannel").addEventListener("click", () =>
+    doAction({
+      action: "settings_update",
+      field: "music_request_channel",
+      value: $("setRequestChannel").value || null,
+    }));
+  $("saveStageTemplate").addEventListener("click", () =>
+    doAction({
+      action: "settings_update",
+      field: "stage_announce_template",
+      value: $("setStageTemplate").value.trim() || null,
+    }));
+  $("resetButton").addEventListener("click", () =>
+    doAction({ action: "settings_reset", field: $("resetField").value }));
+
+  // playlists
+  $("plUserId").value = playlistUserId;
+  $("plLoadButton").addEventListener("click", () => {
+    const value = $("plUserId").value.trim();
+    if (!/^\d{15,21}$/.test(value)) { toast("ใส่ Discord User ID ให้ถูกต้อง", true); return; }
+    playlistUserId = value;
+    localStorage.setItem(STORE.user, value);
+    loadPlaylists();
+  });
+  $("plList").addEventListener("click", (event) => {
+    const pick = event.target.closest("[data-playlist]");
+    if (pick) loadPlaylists(pick.dataset.playlist);
+  });
+  $("plPlayButton").addEventListener("click", () => {
+    if (!selectedPlaylistId) return;
+    const body = { action: "playlist_play", playlistId: selectedPlaylistId };
+    const channelId = $("channelSelect").value;
+    if (channelId) body.voiceChannelId = channelId;
+    playlistAction(body);
+  });
+  $("plAddButton").addEventListener("click", () => {
+    const query = $("plAddInput").value.trim();
+    if (!query || !selectedPlaylistId) return;
+    playlistAction({ action: "playlist_add", playlistId: selectedPlaylistId, query })
+      .then((result) => { if (result) $("plAddInput").value = ""; });
+  });
+  $("plTracks").addEventListener("click", (event) => {
+    const play = event.target.closest("[data-pl-play-track]");
+    if (play) {
+      const body = { action: "play_encoded", trackId: play.dataset.plPlayTrack, mode: "append" };
+      const channelId = $("channelSelect").value;
+      if (channelId) body.voiceChannelId = channelId;
+      doAction(body);
+      return;
+    }
+    const remove = event.target.closest("[data-pl-remove]");
+    if (remove) {
+      playlistAction({
+        action: "playlist_remove_track",
+        playlistId: selectedPlaylistId,
+        position: Number(remove.dataset.plRemove),
+      });
+    }
+  });
+  $("plCreateButton").addEventListener("click", () => {
+    const name = $("plCreateName").value.trim();
+    if (!name) { toast("ตั้งชื่อเพลย์ลิสต์ก่อน", true); return; }
+    playlistAction({
+      action: "playlist_create",
+      name,
+      link: $("plCreateLink").value.trim(),
+    }, false).then((result) => {
+      if (result) { $("plCreateName").value = ""; $("plCreateLink").value = ""; }
+    });
+  });
+  $("plRenameButton").addEventListener("click", () => {
+    const name = $("plRenameInput").value.trim();
+    if (!name || !selectedPlaylistId) return;
+    playlistAction({ action: "playlist_rename", playlistId: selectedPlaylistId, name })
+      .then((result) => { if (result) $("plRenameInput").value = ""; });
+  });
+  $("plDeleteButton").addEventListener("click", () => {
+    if (!selectedPlaylistId) return;
+    playlistAction({ action: "playlist_delete", playlistId: selectedPlaylistId }, false);
+  });
+  $("plClearButton").addEventListener("click", () => {
+    if (!selectedPlaylistId) return;
+    playlistAction({ action: "playlist_clear", playlistId: selectedPlaylistId });
+  });
+  $("plShareButton").addEventListener("click", () => {
+    const target = $("plShareTarget").value.trim();
+    if (!/^\d{15,21}$/.test(target)) { toast("ใส่ User ID ผู้รับให้ถูกต้อง", true); return; }
+    if (!selectedPlaylistId) return;
+    playlistAction({
+      action: "playlist_share",
+      playlistId: selectedPlaylistId,
+      targetUserId: Number(target),
+    }).then((result) => { if (result) $("plShareTarget").value = ""; });
+  });
+  $("plPermButton").addEventListener("click", () => {
+    const target = $("plShareTarget").value.trim();
+    if (!/^\d{15,21}$/.test(target)) { toast("ใส่ User ID ในช่องผู้รับก่อน", true); return; }
+    if (!selectedPlaylistId) return;
+    playlistAction({
+      action: "playlist_permission",
+      playlistId: selectedPlaylistId,
+      permission: $("plPermSelect").value,
+      permAction: $("plPermAction").value,
+      targetUserId: Number(target),
+    });
+  });
+  $("inboxList").addEventListener("click", (event) => {
+    const accept = event.target.closest("[data-inbox-accept]");
+    if (accept) {
+      playlistAction({ action: "inbox_accept", index: Number(accept.dataset.inboxAccept) }, false);
+      return;
+    }
+    const decline = event.target.closest("[data-inbox-decline]");
+    if (decline) {
+      playlistAction({ action: "inbox_decline", index: Number(decline.dataset.inboxDecline) }, false);
+    }
+  });
+
+  // position ticker
+  setInterval(() => { if (state && state.player) updateSeekUI(); }, 500);
+
+  // ---------------------------------------------------------------- boot
+
+  document.querySelectorAll("input[type=range]").forEach(paint);
+  if (password) {
+    refresh().then((ok) => {
+      if (ok) unlock();
+      else lock();
+    });
+  }
+})();

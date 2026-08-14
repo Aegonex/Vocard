@@ -454,6 +454,14 @@ class Config:
 
         value, source = self._value(
             settings,
+            "discord_commands_enabled",
+            "DISCORD_COMMANDS_ENABLED",
+            default=True,
+        )
+        self.discord_commands_enabled: bool = _parse_bool(value, source)
+
+        value, source = self._value(
+            settings,
             "dependency_startup_retries",
             "DEPENDENCY_STARTUP_RETRIES",
             default=5,

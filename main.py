@@ -130,7 +130,11 @@ class Vocard(commands.Bot):
             os.getenv("ADMIN_PASSWORD")
             or os.getenv("WEB_DASHBOARD_KEY", "")
         )
-        self.web_dashboard = WebDashboard(self, admin_password)
+        self.web_dashboard = WebDashboard(
+            self,
+            admin_password,
+            commands_enabled=bot_config.discord_commands_enabled,
+        )
         self.web_dashboard.register(app)
         if not self.web_dashboard.configured:
             func.logger.warning(
@@ -219,6 +223,11 @@ class Vocard(commands.Bot):
         if message.author.bot or not message.guild:
             return False
 
+        # Web-only mode: every message-driven command path (prefix commands,
+        # the bare-mention reply, and the music request channel) is disabled.
+        if not bot_config.discord_commands_enabled:
+            return
+
         # Check if the bot is directly mentioned
         if message.content.strip() == self.user.mention and not message.mention_everyone:
             prefix = await self.command_prefix(self, message)
@@ -303,6 +312,11 @@ class Vocard(commands.Bot):
                             "Dashboard IPC is enabled but unavailable."
                         ) from exc
                     await asyncio.sleep(bot_config.dependency_retry_delay)
+
+        # Web-only mode: publish an empty command tree so slash commands
+        # disappear from Discord instead of failing silently when invoked.
+        if not bot_config.discord_commands_enabled:
+            self.tree.clear_commands(guild=None)
 
         # Keep application commands current without writing runtime state to settings.json.
         if bot_config.sync_commands_on_startup:
@@ -389,6 +403,13 @@ class Vocard(commands.Bot):
 class CommandCheck(discord.app_commands.CommandTree):
     async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
         if interaction.type == discord.InteractionType.application_command:
+            # Web-only mode: block commands that Discord may still have cached.
+            if not bot_config.discord_commands_enabled:
+                await interaction.response.send_message(
+                    "Commands are disabled on this bot. Use the web control panel instead.",
+                    ephemeral=True,
+                )
+                return False
             if not interaction.guild:
                 await interaction.response.send_message("This command can only be used in guilds!")
                 return False
