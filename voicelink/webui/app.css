@@ -300,8 +300,10 @@ input[type=range]:hover::-moz-range-thumb { opacity: 1; }
 
 .bar-center { display: grid; gap: 7px; justify-items: center; padding: 12px 0; }
 .transport { display: flex; align-items: center; gap: 6px; }
-.tbtn { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%;
-  color: var(--text-2); transition: color .12s, background .12s, transform .1s; position: relative; }
+.tbtn { width: 38px; height: 38px; padding: 0; display: grid; place-items: center;
+  border-radius: 50%; color: var(--text-2);
+  transition: color .12s, background .12s, transform .1s; position: relative; }
+.tbtn > svg { grid-area: 1 / 1; }
 .tbtn:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
 .tbtn.on { color: var(--acid); }
 .tbtn svg { width: 17px; height: 17px; }
