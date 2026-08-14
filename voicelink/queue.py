@@ -90,6 +90,13 @@ class Queue:
         if self.count >= self._size:
             raise QueueFull(self.get_msg("queue.errors.queueFull").format(self._size))
 
+        # Listener requests queue ahead of pending autoplay recommendations.
+        if not getattr(item, "is_autoplay", False):
+            for offset, track in enumerate(self._queue[self._position:]):
+                if getattr(track, "is_autoplay", False):
+                    self._queue.insert(self._position + offset, item)
+                    return offset + 1
+
         self._queue.append(item)
         return self.count
 

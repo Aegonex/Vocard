@@ -774,7 +774,14 @@ class Player(VoiceProtocol):
     async def add_track(self, raw_tracks: Union[Track, List[Track]], *, start_time: int = 0, end_time: int = 0, at_front: bool = False, duplicate: bool = True) -> int:
         """Adds one or more tracks to the queue."""
         tracks: List[Track] = []
-        _duplicate_tracks = [] if self.queue._allow_duplicate and duplicate else [track.uri for track in self.queue._queue]
+        # duplicate=False (autoplay) checks played history too, so recommendations
+        # never repeat; the guild "no duplicates" setting only guards current + upcoming.
+        if not duplicate:
+            _duplicate_tracks = [track.uri for track in self.queue._queue]
+        elif not self.queue._allow_duplicate:
+            _duplicate_tracks = [track.uri for track in self.queue._queue[max(self.queue._position - 1, 0):]]
+        else:
+            _duplicate_tracks = []
         raw_tracks = raw_tracks[0] if isinstance(raw_tracks, List) and len(raw_tracks) == 1 else raw_tracks
 
         try:
@@ -1011,6 +1018,8 @@ class Player(VoiceProtocol):
 
         tracks = await track.get_recommendations(self._node)
         if tracks:
+            for rec_track in tracks:
+                rec_track.is_autoplay = True
             await self.add_track(tracks, duplicate=False)
             
             self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) has been requested recommendations.")

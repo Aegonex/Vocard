@@ -57,7 +57,8 @@ class Track:
         "is_stream",
         "is_seekable",
         "position",
-        "end_time"
+        "end_time",
+        "is_autoplay"
     )
 
     def __init__(
@@ -91,6 +92,7 @@ class Track:
         self.position: int = info.get("position", 0)
 
         self.end_time: Optional[int] = None
+        self.is_autoplay: bool = False
 
     def __eq__(self, other) -> bool:
         """Checks equality between two tracks."""
