@@ -38,6 +38,8 @@ input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparen
 .key-field .ghost-button { border-width: 0 0 0 1px; }
 .primary-button { width: 100%; margin-top: 13px; border: 0; background: var(--acid); color: #11140b; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; font-weight: 900; cursor: pointer; }
 .primary-button:hover { filter: brightness(1.08); }
+.primary-button.loading span { font-size: 0; line-height: 0; width: 14px; height: 14px; border: 2px solid rgba(17,20,11,.25); border-top-color: #11140b; border-radius: 50%; animation: spin .7s linear infinite; }
+.primary-button:disabled.loading, .connect-button:disabled.loading { opacity: 1; cursor: progress; }
 .form-error { min-height: 22px; color: var(--danger); font-size: 13px; }
 .login-foot { color: var(--muted); font-size: 11px; display: flex; gap: 8px; align-items: center; margin-top: 22px; }
 .login-foot span, .live-dot { width: 7px; height: 7px; background: var(--acid); border-radius: 50%; box-shadow: 0 0 12px var(--acid); }

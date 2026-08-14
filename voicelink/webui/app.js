@@ -27,6 +27,7 @@ let snapshot = null;
 let pollTimer = null;
 let toastTimer = null;
 let selectedVoiceChannelId = "";
+const busy = { play: false, connect: false };
 
 function notify(message, isError = false) {
   clearTimeout(toastTimer);
@@ -101,6 +102,11 @@ function voiceChannelOptionList(select, channels, selected, connectedChannelId) 
 }
 
 function renderVoiceConnection(guild) {
+  if (busy.connect) {
+    ui.connect.disabled = true;
+    ui.connect.textContent = "CONNECTING…";
+    return;
+  }
   const channel = guild?.voiceChannels.find((item) => item.id === ui.channel.value);
   const connected = channel?.status === "connected";
   ui.connect.disabled = !channel || connected;
@@ -189,7 +195,7 @@ function render(state) {
     selectedVoiceChannelId,
     connectedChannelId,
   );
-  ui.play.disabled = !ui.channel.value;
+  ui.play.disabled = !ui.channel.value || busy.play;
   renderVoiceConnection(guild);
 
   serviceStatus(ui.discordStatus, ui.discordValue, services.discord);
@@ -320,10 +326,23 @@ ui.guild.addEventListener("change", () => {
 });
 ui.channel.addEventListener("change", () => {
   selectedVoiceChannelId = ui.channel.value;
-  ui.play.disabled = !ui.channel.value;
+  ui.play.disabled = !ui.channel.value || busy.play;
   renderVoiceConnection(selectedGuild());
 });
-ui.connect.addEventListener("click", () => action("connect", { voiceChannelId: ui.channel.value }));
+ui.connect.addEventListener("click", async () => {
+  if (busy.connect || !ui.channel.value) return;
+  busy.connect = true;
+  ui.connect.disabled = true;
+  ui.connect.textContent = "CONNECTING…";
+  ui.connect.setAttribute("aria-busy", "true");
+  try {
+    await action("connect", { voiceChannelId: ui.channel.value });
+  } finally {
+    busy.connect = false;
+    ui.connect.removeAttribute("aria-busy");
+    renderVoiceConnection(selectedGuild());
+  }
+});
 ui.disconnect.addEventListener("click", () => {
   selectedVoiceChannelId = "";
   action("disconnect");
@@ -331,8 +350,19 @@ ui.disconnect.addEventListener("click", () => {
 ui.playForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = ui.search.value.trim();
-  if (!query) return;
-  if (await action("play", { query, voiceChannelId: ui.channel.value })) ui.search.value = "";
+  if (!query || busy.play) return;
+  busy.play = true;
+  ui.play.classList.add("loading");
+  ui.play.disabled = true;
+  ui.play.setAttribute("aria-busy", "true");
+  try {
+    if (await action("play", { query, voiceChannelId: ui.channel.value })) ui.search.value = "";
+  } finally {
+    busy.play = false;
+    ui.play.classList.remove("loading");
+    ui.play.removeAttribute("aria-busy");
+    ui.play.disabled = !ui.channel.value;
+  }
 });
 ui.pause.addEventListener("click", () => action("pause", { pause: !snapshot?.player?.isPaused }));
 ui.skip.addEventListener("click", () => action("skip"));

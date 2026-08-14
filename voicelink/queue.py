@@ -90,12 +90,17 @@ class Queue:
         if self.count >= self._size:
             raise QueueFull(self.get_msg("queue.errors.queueFull").format(self._size))
 
-        # Listener requests queue ahead of pending autoplay recommendations.
+        # Listener requests queue ahead of the trailing run of pending autoplay
+        # recommendations, but never ahead of other listeners' pending tracks
+        # (which can sit between autoplay tracks after a shuffle or move).
         if not getattr(item, "is_autoplay", False):
-            for offset, track in enumerate(self._queue[self._position:]):
-                if getattr(track, "is_autoplay", False):
-                    self._queue.insert(self._position + offset, item)
-                    return offset + 1
+            upcoming = self._queue[self._position:]
+            insert_offset = len(upcoming)
+            while insert_offset > 0 and getattr(upcoming[insert_offset - 1], "is_autoplay", False):
+                insert_offset -= 1
+            if insert_offset < len(upcoming):
+                self._queue.insert(self._position + insert_offset, item)
+                return insert_offset + 1
 
         self._queue.append(item)
         return self.count
@@ -152,8 +157,9 @@ class Queue:
             raise OutofList(self.get_msg("queue.errors.outOfList"))
 
         try:
-            item = self._queue[self._position + target - 1]
-            self._queue.remove(item)
+            # Pop by index; list.remove() would match the first __eq__-equal
+            # track, which can be a history copy of the same song.
+            item = self._queue.pop(self._position + target - 1)
             self.put_at_index(to, item)
             return item
         except:
@@ -170,14 +176,18 @@ class Queue:
 
         try:
             removed_tracks: Dict[str, Track] = {}
-            for i, track in enumerate(self._queue[pos + index: pos + index2 + 1]):
+            # Delete by index from the tail end so earlier indexes stay valid;
+            # list.remove() would match the first __eq__-equal track, which can
+            # be a history copy of the same song.
+            for i in range(min(pos + index2, len(self._queue) - 1), pos + index - 1, -1):
+                track = self._queue[i]
                 if member and track.requester != member:
                     continue
-            
-                self._queue.remove(track)
-                removed_tracks[pos + index + i] = track
 
-            return removed_tracks
+                del self._queue[i]
+                removed_tracks[i] = track
+
+            return dict(sorted(removed_tracks.items()))
         except:
             raise OutofList(self.get_msg("queue.errors.outOfList"))
 
@@ -216,21 +226,39 @@ class FairQueue(Queue):
         if len(self._queue) >= self._size:
             raise QueueFull(self.get_msg("queue.errors.queueFull").format(self._size))
 
+        # Autoplay recommendations stay at the tail and never join the
+        # fairness rotation between listeners.
+        if getattr(item, "is_autoplay", False):
+            self._queue.append(item)
+            return self.count
+
         tracks = self.tracks(incTrack=True)
-        lastIndex = len(tracks)
-        for track in reversed(tracks):
+        listener_slots = [(i, t) for i, t in enumerate(tracks) if not getattr(t, "is_autoplay", False)]
+        listeners = [t for _, t in listener_slots]
+        lastIndex = len(listeners)
+        for track in reversed(listeners):
             if track.requester == item.requester:
                 break
             lastIndex -= 1
         self._set.clear()
-        for track in tracks[lastIndex:]:
+        for track in listeners[lastIndex:]:
             if track.requester in self._set:
                 break
             lastIndex += 1
             self._set.add(track.requester)
 
-        self.put_at_index(lastIndex, item)
-        return lastIndex
+        if lastIndex < len(listeners):
+            insert_at = listener_slots[lastIndex][0]
+        else:
+            # Slot 0 of tracks(incTrack=True) is the currently playing track;
+            # never walk back past it when the queue is pure autoplay.
+            floor = 1 if self._position > 0 else 0
+            insert_at = len(tracks)
+            while insert_at > floor and getattr(tracks[insert_at - 1], "is_autoplay", False):
+                insert_at -= 1
+
+        self.put_at_index(insert_at, item)
+        return insert_at
     
 QUEUE_TYPES: Dict[str, Queue] = {
     "queue": Queue,

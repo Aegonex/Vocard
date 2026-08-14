@@ -779,7 +779,8 @@ class Player(VoiceProtocol):
         if not duplicate:
             _duplicate_tracks = [track.uri for track in self.queue._queue]
         elif not self.queue._allow_duplicate:
-            _duplicate_tracks = [track.uri for track in self.queue._queue[max(self.queue._position - 1, 0):]]
+            _from = self.queue._position - 1 if self._current else self.queue._position
+            _duplicate_tracks = [track.uri for track in self.queue._queue[max(_from, 0):]]
         else:
             _duplicate_tracks = []
         raw_tracks = raw_tracks[0] if isinstance(raw_tracks, List) and len(raw_tracks) == 1 else raw_tracks
@@ -1020,10 +1021,14 @@ class Player(VoiceProtocol):
         if tracks:
             for rec_track in tracks:
                 rec_track.is_autoplay = True
-            await self.add_track(tracks, duplicate=False)
-            
-            self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) has been requested recommendations.")
-            return True
+            try:
+                added = await self.add_track(tracks, duplicate=False)
+            except DuplicateTrack:
+                return False
+
+            if added:
+                self._logger.debug(f"Player in {self.guild.name}({self.guild.id}) has been requested recommendations.")
+                return True
         return False
     
     async def update_voice_status(self, remove_status: bool = False) -> None:

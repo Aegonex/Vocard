@@ -364,7 +364,9 @@ class WebDashboard:
             added = await player.add_track(tracks)
             if not player.is_playing:
                 await player.do_next()
-            return f"Added {added or len(tracks)} track(s)."
+            # Single adds return a queue position, list adds return a count.
+            count = (added or 0) if isinstance(result, Playlist) else (1 if added else 0)
+            return f"Added {count} track(s)."
 
         player = self._require_player(guild)
 
