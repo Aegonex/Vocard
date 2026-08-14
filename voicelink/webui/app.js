@@ -61,6 +61,26 @@
     input.style.setProperty("--fill", `${ratio}%`);
   }
 
+  // Swap a button's label for a spinner and disable it while a request is in
+  // flight, so the user sees progress and cannot double-submit.
+  function setLoading(el, on) {
+    if (!el) return;
+    if (on) {
+      if (el.dataset.loading) return;
+      el.dataset.loading = "1";
+      el.style.minWidth = `${el.offsetWidth}px`;
+      el._label = el.innerHTML;
+      el.innerHTML = '<i class="spin"></i>';
+      el.disabled = true;
+    } else {
+      if (!el.dataset.loading) return;
+      delete el.dataset.loading;
+      el.style.minWidth = "";
+      if (el._label != null) { el.innerHTML = el._label; el._label = null; }
+      el.disabled = false;
+    }
+  }
+
   let toastTimer = null;
   function toast(message, isError = false) {
     const el = $("toast");
@@ -560,17 +580,24 @@
 
   $("disconnectButton").addEventListener("click", () => doAction({ action: "disconnect" }));
 
-  function queueAdd(mode) {
+  const addSubmit = () => document.querySelector('#addForm button[type="submit"]');
+
+  function queueAdd(mode, trigger) {
     const query = $("queryInput").value.trim();
     if (!query) { toast("พิมพ์ชื่อเพลงหรือวางลิงก์ก่อน", true); return; }
     const body = { action: "play", query, mode };
     const channelId = $("channelSelect").value;
     if (channelId) body.voiceChannelId = channelId;
-    doAction(body).then((result) => { if (result) $("queryInput").value = ""; });
+    const button = trigger || addSubmit();
+    setLoading(button, true);
+    $("queryInput").disabled = true;
+    doAction(body)
+      .then((result) => { if (result) $("queryInput").value = ""; })
+      .finally(() => { setLoading(button, false); $("queryInput").disabled = false; });
   }
-  $("addForm").addEventListener("submit", (event) => { event.preventDefault(); queueAdd("append"); });
-  $("addTopButton").addEventListener("click", () => queueAdd("top"));
-  $("addForceButton").addEventListener("click", () => queueAdd("force"));
+  $("addForm").addEventListener("submit", (event) => { event.preventDefault(); queueAdd("append", addSubmit()); });
+  $("addTopButton").addEventListener("click", (event) => queueAdd("top", event.currentTarget));
+  $("addForceButton").addEventListener("click", (event) => queueAdd("force", event.currentTarget));
 
   $("clearQueueButton").addEventListener("click", () => doAction({ action: "clear" }));
   $("shuffleButton").addEventListener("click", () => doAction({ action: "shuffle" }));
@@ -732,11 +759,14 @@
     if (channelId) body.voiceChannelId = channelId;
     playlistAction(body);
   });
-  $("plAddButton").addEventListener("click", () => {
+  $("plAddButton").addEventListener("click", (event) => {
     const query = $("plAddInput").value.trim();
     if (!query || !selectedPlaylistId) return;
+    const button = event.currentTarget;
+    setLoading(button, true);
     playlistAction({ action: "playlist_add", playlistId: selectedPlaylistId, query })
-      .then((result) => { if (result) $("plAddInput").value = ""; });
+      .then((result) => { if (result) $("plAddInput").value = ""; })
+      .finally(() => setLoading(button, false));
   });
   $("plTracks").addEventListener("click", (event) => {
     const play = event.target.closest("[data-pl-play-track]");

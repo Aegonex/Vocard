@@ -97,6 +97,11 @@ svg { display: block; }
   background: var(--acid); color: #0c0f04; transition: transform .12s, filter .12s; }
 .pill-btn:hover:not(:disabled) { filter: brightness(1.07); transform: scale(1.02); }
 .pill-btn.block { width: 100%; margin-top: 6px; }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
+  border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
+  vertical-align: -2px; }
+button[data-loading] { opacity: 1 !important; cursor: progress !important; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== panels ===== */
 .panel { display: none; padding: 6px 28px 40px; }
