@@ -71,10 +71,11 @@ svg { display: block; }
 .lock-button:hover { color: var(--danger); border-color: rgba(255,111,97,.4); }
 .sidebar-foot { display: flex; align-items: center; gap: 11px; margin-top: 10px;
   padding: 12px 10px; border-radius: var(--r-md); background: #ffffff08; position: relative; }
-.sidebar-foot img { width: 34px; height: 34px; border-radius: 50%; background: var(--bg-hover); }
-.sidebar-foot .dot { position: absolute; width: 9px; height: 9px; border-radius: 50%;
-  background: var(--text-3); border: 2px solid var(--bg-raised); left: 32px; top: 34px; }
-.sidebar-foot .dot.ok { background: var(--acid); }
+.sidebar-foot .ava { position: relative; flex: 0 0 auto; line-height: 0; }
+.sidebar-foot .ava img { width: 34px; height: 34px; border-radius: 50%; background: var(--bg-hover); display: block; }
+.sidebar-foot .dot { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px;
+  border-radius: 50%; background: var(--text-3); border: 2px solid var(--bg-raised); }
+.sidebar-foot .dot.ok { background: var(--acid); box-shadow: 0 0 8px rgba(200, 255, 54, .55); }
 .sidebar-foot strong { display: block; font-size: 13px; }
 .sidebar-foot small { display: block; color: var(--text-2); font-size: 11px; margin-top: 2px; }
 
@@ -88,6 +89,8 @@ svg { display: block; }
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%239aa79b' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
   background-repeat: no-repeat; background-position: right 14px center; cursor: pointer; }
 .toolbar select:hover { border-color: #ffffff33; }
+#guildSelect { max-width: 210px; }
+#channelSelect { min-width: 260px; max-width: 480px; flex: 0 1 auto; }
 .toolbar .spacer { flex: 1; }
 .pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   border-radius: 999px; padding: 10px 20px; font-size: 12px; font-weight: 800; letter-spacing: .04em;
@@ -164,6 +167,8 @@ svg { display: block; }
 .text-btn { color: var(--text-2); font-size: 11px; font-weight: 800; letter-spacing: .07em;
   padding: 7px 12px; border-radius: 999px; }
 .text-btn:hover:not(:disabled) { color: var(--danger); background: rgba(255,111,97,.08); }
+#clearQueueButton { color: var(--danger); }
+#clearQueueButton:hover:not(:disabled) { background: rgba(255,111,97,.12); }
 .hint { color: var(--text-3); font-size: 11.5px; line-height: 1.6; margin: 10px 0 0; }
 
 .search { display: flex; align-items: center; gap: 10px; background: #ffffff0a;
@@ -309,7 +314,7 @@ input[type=range]:hover::-moz-range-thumb { opacity: 1; }
 .tbtn svg { width: 17px; height: 17px; }
 .tbtn.main { width: 44px; height: 44px; background: var(--text); color: var(--bg); }
 .tbtn.main:hover:not(:disabled) { transform: scale(1.06); background: var(--acid); color: #0c0f04; }
-.tbtn.main svg { width: 18px; height: 18px; }
+.tbtn.main svg { width: 20px; height: 20px; }
 .tbtn #repeatBadge { position: absolute; right: 4px; top: 4px; font-size: 8px; font-weight: 900;
   background: var(--acid); color: #0c0f04; border-radius: 50%; width: 12px; height: 12px;
   display: grid; place-items: center; font-style: normal; }
