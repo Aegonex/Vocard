@@ -90,7 +90,7 @@ svg { display: block; }
   background-repeat: no-repeat; background-position: right 14px center; cursor: pointer; }
 .toolbar select:hover { border-color: #ffffff33; }
 #guildSelect { max-width: 210px; }
-#channelSelect { min-width: 260px; max-width: 480px; flex: 0 1 auto; }
+#channelSelect { min-width: 260px; max-width: 50vw; width: auto; flex: 0 1 auto; }
 .toolbar .spacer { flex: 1; }
 .pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   border-radius: 999px; padding: 10px 20px; font-size: 12px; font-weight: 800; letter-spacing: .04em;
