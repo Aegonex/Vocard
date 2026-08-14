@@ -154,8 +154,6 @@
     const services = state.services || {};
     const healthy = services.status === "ok";
     $("botName").textContent = state.bot.name;
-    const mode = state.commandsEnabled ? "" : " · เว็บเท่านั้น";
-    $("botMeta").textContent = `${state.bot.latencyMs} ms · ${state.bot.guildCount} เซิร์ฟเวอร์${mode}`;
     $("botDot").classList.toggle("ok", healthy);
     const avatar = $("botAvatar");
     if (state.bot.avatarUrl && avatar.src !== state.bot.avatarUrl) avatar.src = state.bot.avatarUrl;
