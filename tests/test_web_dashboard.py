@@ -479,6 +479,29 @@ class DashboardExtendedActionTests(unittest.IsolatedAsyncioTestCase):
             self.player.set_repeat.assert_awaited_with(LoopType.OFF, self.requester)
             self.player.stop.assert_awaited()
 
+    async def test_single_video_url_is_resolved_via_search(self) -> None:
+        channel = SimpleNamespace(id=456, name="Music")
+        wrong = SimpleNamespace(identifier="other", title="Wrong", is_stream=False)
+        right = SimpleNamespace(identifier="82-jTNka3uc", title="Right", is_stream=False)
+        node = SimpleNamespace(
+            is_available=True,
+            get_tracks=AsyncMock(return_value=[wrong, right]),
+        )
+        self.player.is_playing = False
+        with (
+            patch.object(self.dashboard, "_voice_channel", return_value=channel),
+            patch.object(self.dashboard, "_ensure_player", new=AsyncMock(return_value=self.player)),
+            patch("voicelink.web_dashboard.NodePool.get_node", return_value=node),
+        ):
+            await self.dashboard._run_action(
+                self.guild,
+                {"action": "play", "query": "https://youtu.be/82-jTNka3uc?si=abc"},
+            )
+        # The blocked single-video load path is rerouted through ytsearch by id...
+        node.get_tracks.assert_awaited_once_with(query="ytsearch:82-jTNka3uc", requester=self.requester)
+        # ...and the exact-id match is queued, not merely the first search hit.
+        self.player.add_track.assert_awaited_with([right])
+
     async def test_state_includes_history_and_settings(self) -> None:
         with patch(
             "voicelink.web_dashboard.MongoDBHandler.get_cached_settings",

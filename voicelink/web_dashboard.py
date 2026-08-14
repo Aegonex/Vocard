@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import re
 import time
 
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlparse
 
 import discord
 
@@ -126,6 +128,43 @@ class DashboardError(Exception):
     def __init__(self, message: str, *, status: int = 400) -> None:
         super().__init__(message)
         self.status = status
+
+
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def _youtube_video_id(query: str) -> Optional[str]:
+    """Return the video id of a single-video YouTube URL, else None.
+
+    Loading a single watch URL forces youtube-source to call the per-video
+    innertube player endpoint, which YouTube blocks by IP on datacenters.
+    Searching by the bare id uses the search endpoint (not blocked) and
+    returns the exact video as the top hit, so we route single URLs through it.
+    Playlist URLs (no `v`) are left untouched — their loader already works.
+    """
+    q = (query or "").strip()
+    if not q.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        parsed = urlparse(q)
+    except ValueError:
+        return None
+    host = parsed.netloc.lower()
+    for prefix in ("www.", "m."):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    candidate = None
+    if host == "youtu.be":
+        candidate = parsed.path.lstrip("/").split("/")[0]
+    elif host in ("youtube.com", "music.youtube.com"):
+        params = parse_qs(parsed.query)
+        if "v" in params:
+            candidate = params["v"][0]
+        elif parsed.path.startswith("/shorts/"):
+            candidate = parsed.path.split("/shorts/", 1)[1].split("/")[0]
+        elif parsed.path.startswith("/embed/"):
+            candidate = parsed.path.split("/embed/", 1)[1].split("/")[0]
+    return candidate if candidate and _VIDEO_ID_RE.match(candidate) else None
 
 
 def _playlist_limits() -> tuple[int, int, str]:
@@ -570,6 +609,30 @@ class WebDashboard:
         return mode
 
     @staticmethod
+    async def _lookup_tracks(node, query: str, requester):
+        """Resolve a query, bypassing the blocked single-video load path.
+
+        Returns (result, video_id) where video_id is set when the query was a
+        single YouTube video URL that we rerouted through ytsearch.
+        """
+        video_id = _youtube_video_id(query)
+        lookup = f"ytsearch:{video_id}" if video_id else query
+        result = await node.get_tracks(query=lookup, requester=requester)
+        return result, video_id
+
+    @staticmethod
+    def _pick_single(result, video_id):
+        """Choose the intended track from a (possibly search) result list."""
+        if video_id:
+            exact = next(
+                (t for t in result if getattr(t, "identifier", None) == video_id),
+                None,
+            )
+            if exact is not None:
+                return exact
+        return result[0]
+
+    @staticmethod
     def _decode_stored_track(track_id: str, requester) -> Track:
         try:
             info = Track.decode(track_id)
@@ -754,10 +817,10 @@ class WebDashboard:
         node = NodePool.get_node()
         if node is None or not node.is_available:
             raise DashboardError("Lavalink is not ready.", status=503)
-        result = await node.get_tracks(query=query, requester=requester)
+        result, video_id = await self._lookup_tracks(node, query, requester)
         if not result:
             raise DashboardError("No tracks were found.", status=404)
-        tracks = result.tracks if isinstance(result, Playlist) else result[:1]
+        tracks = result.tracks if isinstance(result, Playlist) else [self._pick_single(result, video_id)]
         if mode == "append":
             added = await player.add_track(tracks)
         else:
@@ -1161,12 +1224,12 @@ class WebDashboard:
             node = NodePool.get_node()
             if node is None or not node.is_available:
                 raise DashboardError("Lavalink is not ready.", status=503)
-            result = await node.get_tracks(query=query, requester=requester)
+            result, video_id = await self._lookup_tracks(node, query, requester)
             if not result:
                 raise DashboardError("No tracks were found.", status=404)
             if isinstance(result, Playlist):
                 raise DashboardError("Playlist links cannot be added as a single track.")
-            track = result[0]
+            track = self._pick_single(result, video_id)
             if track.is_stream:
                 raise DashboardError("Live streams cannot be saved to playlists.")
             await MongoDBHandler.update_user(
