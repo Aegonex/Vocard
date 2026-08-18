@@ -26,11 +26,18 @@ audio, which is all of the bandwidth, still comes straight out of Railway.
 
 ## Setup
 
-1. Bring up ProtonVPN on the host and confirm the egress IP changed.
-2. `RELAY_TOKEN=$(openssl rand -hex 24) WEBPO_TOKEN=$(openssl rand -hex 24) docker compose up -d`
+1. Put the WireGuard details from the Proton config into `.env` next to
+   `compose.yml`: `WIREGUARD_PRIVATE_KEY`, `WIREGUARD_PUBLIC_KEY` (the `[Peer]`
+   one), `WIREGUARD_ENDPOINT_IP`, `WIREGUARD_ADDRESSES` (the IPv4 `Address`),
+   plus `RELAY_TOKEN` and `WEBPO_TOKEN`.
+2. `docker compose up -d`
 3. `curl -s localhost:8081/healthz` — `egressIp` must be the VPN address, not the
    host's own. If it is not, container traffic is bypassing the tunnel and the
    relay is worthless.
+
+Do **not** run ProtonVPN on the host instead: it claims the default route from
+every process, which drops sshd's replies and cloudflared's tunnel at the same
+time and leaves no way back into the box.
 4. Read the tunnel hostname out of `docker compose logs cloudflared`, then point
    Lavalink at it with `PLUGINS_YOUTUBE_REMOTEINNERTUBE_URL` /
    `PLUGINS_YOUTUBE_REMOTEINNERTUBE_PASS` and set `PLUGINS_YOUTUBE_REMOTEPOT_URL`

@@ -1,11 +1,37 @@
-# Both services run in the host network namespace on purpose: the whole point of
-# this box is that its egress goes through ProtonVPN, and a bridge network is
-# exactly where VPN kill-switch rules tend to strand container traffic.
+# The VPN runs inside a container, not on the host.
+#
+# Putting ProtonVPN on the host itself takes the default route away from
+# everything, including sshd's replies and cloudflared's outbound connection —
+# tried it, and the box dropped off both paths at once with no way back in.
+# Confining the tunnel to gluetun means only the relay and the token minter
+# egress through Proton, while the host keeps its own routing and stays
+# reachable.
 services:
+  vpn:
+    image: qmcgaw/gluetun:latest
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    restart: unless-stopped
+    environment:
+      VPN_SERVICE_PROVIDER: custom
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_PUBLIC_KEY: ${WIREGUARD_PUBLIC_KEY}
+      WIREGUARD_ENDPOINT_IP: ${WIREGUARD_ENDPOINT_IP}
+      WIREGUARD_ENDPOINT_PORT: ${WIREGUARD_ENDPOINT_PORT:-51820}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES}
+      # Without this the published port answers into the tunnel and never reaches
+      # the caller back on the host.
+      FIREWALL_OUTBOUND_SUBNETS: 172.16.0.0/12
+      DOT: "off"
+    ports:
+      - "127.0.0.1:8081:8081"
+
   webpo-generator:
     build: https://github.com/ashton045/webpo-generator.git
-    network_mode: host
+    network_mode: service:vpn
     restart: unless-stopped
+    depends_on: [vpn]
     environment:
       HOST: 127.0.0.1
       PORT: 8080
@@ -14,18 +40,19 @@ services:
 
   relay:
     build: .
-    network_mode: host
+    network_mode: service:vpn
     restart: unless-stopped
-    depends_on: [webpo-generator]
+    depends_on: [vpn, webpo-generator]
     environment:
-      HOST: 127.0.0.1
+      HOST: 0.0.0.0
       PORT: 8081
       RELAY_TOKEN: ${RELAY_TOKEN}
       WEBPO_URL: http://127.0.0.1:8080
       WEBPO_TOKEN: ${WEBPO_TOKEN}
 
-  # Quick tunnel: no Cloudflare account needed, but the hostname changes on every
-  # restart. Swap in `tunnel run --token ...` once a named tunnel exists.
+  # Stays on the host network on purpose: its connection to Cloudflare must not
+  # ride the VPN, or a tunnel restart hands out a new hostname and Lavalink is
+  # left pointing at a dead one.
   cloudflared:
     image: cloudflare/cloudflared:latest
     network_mode: host
