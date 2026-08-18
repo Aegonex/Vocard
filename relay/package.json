@@ -1,0 +1,11 @@
+{
+  "name": "innertube-relay",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Forwards YouTube API calls from an IP YouTube still trusts; audio keeps streaming direct from Railway",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
