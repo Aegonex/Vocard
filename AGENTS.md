@@ -7,9 +7,10 @@ addresses, and getting audio playing again required changes in three places.**
 
 ## What runs where
 
-Everything below lives in one Railway project, `JED89`, environment `bot`
-(project `4ab3f390-380a-4627-9a4a-39ce6ad7428a`, env
-`f2116409-1b65-4731-ac25-02ff3cc87572`).
+Everything below lives in one Railway project, `JED89`, environment `bot`.
+This repository is public, so the project id, the relay's hostname and the VPS
+address are deliberately not written down here — read them from
+`railway status --json` and from the operator's own notes.
 
 | Service | What it is |
 |---|---|
@@ -17,8 +18,8 @@ Everything below lives in one Railway project, `JED89`, environment `bot`
 | `Lavalink` | `lavalink/` — Lavalink 4.2.2 plus a YouTube plugin we build from source. |
 | `webpo-generator` | poToken minter. Kept around mainly as a toolbox container: Lavalink listens on the private network only, so diagnostics have to run from inside the project. |
 
-Off Railway, on a Vultr VPS (`149.28.133.240`, Ubuntu 24.04, root SSH): the **innertube
-relay**, in `/opt/innertube-relay`, built from `relay/` in this repo.
+Off Railway, on a small Ubuntu VPS: the **innertube relay**, in
+`/opt/innertube-relay`, built from `relay/` in this repo.
 
 Bots reach Lavalink at `lavalink.railway.internal:2333`. Railway's private
 network is IPv6-only, so never force the JVM to IPv4 — it would cut the fleet off
@@ -110,6 +111,9 @@ project:
 | railway ssh -p <project> -e <env> -s webpo-generator -- sh
 ```
 
+It reads the node password from `LAVALINK_PASSWORD`; set it rather than relying
+on the placeholder default.
+
 Two caveats learned the hard way: it tries every client per video and will
 throttle itself on long batches, so results flap between runs — judge by batches
 and by the player path, never by one video. And **always test `ytsearch:` too**,
@@ -122,7 +126,7 @@ Read the Lavalink logs first and match the symptom:
 
 | What the log says | What it means |
 |---|---|
-| `LOGIN_REQUIRED`, "Sign in to confirm you're not a bot" | The exit address is flagged. Switch Proton servers: `/opt/innertube-relay/switch-vpn.sh <new.conf>`. No Lavalink redeploy needed. |
+| `LOGIN_REQUIRED`, "Sign in to confirm you're not a bot" | The exit address is flagged. Switch Proton servers on the VPS: `switch-vpn.sh <new.conf>`. No Lavalink redeploy needed. |
 | `Not success status code: 403` on media | The media fallback is not working. Check the relay is reachable and that the retry marker logic is intact. |
 | `Invalid status code for player api response: 400` | YouTube retired that client's version. Bump it in the fork. |
 | "The page needs to be reloaded" | A request went out without a signature timestamp. |
@@ -136,13 +140,22 @@ Read the Lavalink logs first and match the symptom:
   link points at a deleted environment. Backgrounded `railway` commands produce
   no output on this machine (the token is keychain-gated); poll in the
   foreground instead.
-- `railway ssh` needs the dedicated key registered as `vocard-claude`
-  (`~/.ssh/railway_ed25519`); the default key belongs to another account and the
-  CLI will not fall back to it.
+- `railway ssh` needs its own registered key; if the machine's default key is
+  tied to a different Railway account the CLI will not silently fall back to
+  another one.
 - Setting a *changed* variable triggers a redeploy; setting an unchanged one does
   not, and deleting one is unreliable — bump a marker variable to force it.
 - `railway service redeploy` clones the previous deployment and ignores new
   configuration. Push or set a variable instead.
+
+## Public repository
+
+Nothing here should carry a credential, an address or a hostname that helps
+someone reach the fleet. Secrets live in Railway variables and in
+`/opt/innertube-relay/.env` on the VPS, never in a commit. The Lavalink node
+password in `settings.default.json` is upstream's placeholder — the deployed
+value comes from `LAVALINK_SERVER_PASSWORD`, and it should not match the
+placeholder.
 
 ## Known fragility
 
