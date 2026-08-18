@@ -25,6 +25,10 @@ const WEBPO_TOKEN = process.env.WEBPO_TOKEN || '';
 const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS || 20000);
 
 // Anything not on this list is refused: the relay must never become an open proxy.
+// Media hosts are only reachable through /m, and only as a fallback: their URLs
+// are usually fetched directly by whoever needs the audio.
+const MEDIA_HOST_SUFFIX = '.googlevideo.com';
+
 const ALLOWED_HOSTS = new Set([
   'youtubei.googleapis.com',
   'www.youtube.com',
@@ -44,7 +48,7 @@ const STRIPPED_RESPONSE_HEADERS = new Set([
   'connection', 'keep-alive', 'transfer-encoding', 'content-encoding', 'content-length',
 ]);
 
-const stats = { forwarded: 0, minted: 0, rejected: 0, upstreamErrors: 0, startedAt: Date.now() };
+const stats = { forwarded: 0, minted: 0, media: 0, mediaBytes: 0, rejected: 0, upstreamErrors: 0, startedAt: Date.now() };
 
 function matchesToken(given) {
   if (typeof given !== 'string') return false;
@@ -146,6 +150,56 @@ async function mint(req, res) {
   }
 }
 
+/**
+ * Streams a media URL from this machine's address.
+ *
+ * Some stream URLs answer 403 to anyone but the address that requested them, so
+ * the caller falls back to here after a direct fetch is refused. The body is
+ * piped straight through rather than buffered: tracks are megabytes, and holding
+ * one per listener in memory would be a fine way to kill the box.
+ */
+async function media(req, res, target) {
+  let url;
+  try {
+    url = new URL(target);
+  } catch {
+    return send(res, 400, { error: 'invalid url' });
+  }
+
+  if (url.protocol !== 'https:' || !url.hostname.endsWith(MEDIA_HOST_SUFFIX)) {
+    stats.rejected++;
+    return send(res, 403, { error: 'host not allowed', host: url.hostname });
+  }
+
+  const headers = {};
+  // Range is the only request header that matters here, and it matters a lot:
+  // the player seeks by asking for byte windows.
+  if (req.headers.range) headers.range = req.headers.range;
+  if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
+
+  try {
+    const upstream = await fetch(url, { method: req.method === 'HEAD' ? 'HEAD' : 'GET', headers, redirect: 'follow' });
+    const outHeaders = {};
+    upstream.headers.forEach((value, name) => {
+      if (!STRIPPED_RESPONSE_HEADERS.has(name.toLowerCase())) outHeaders[name] = value;
+    });
+    if (upstream.headers.get('content-length')) outHeaders['content-length'] = upstream.headers.get('content-length');
+    res.writeHead(upstream.status, outHeaders);
+    stats.media++;
+
+    if (!upstream.body) return res.end();
+    for await (const chunk of upstream.body) {
+      stats.mediaBytes += chunk.length;
+      if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve));
+    }
+    res.end();
+  } catch (err) {
+    stats.upstreamErrors++;
+    if (!res.headersSent) send(res, 502, { error: 'media fetch failed', detail: String(err.message || err) });
+    else res.destroy();
+  }
+}
+
 // Egress address is the whole point of this box, so make it cheap to check.
 let egressCache = { ip: null, at: 0 };
 async function egress() {
@@ -178,6 +232,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === '/generate' || path.startsWith('/generate?')) return await mint(req, res);
+
+    if (path.startsWith('/m?')) {
+      const target = new URLSearchParams(path.slice(3)).get('url');
+      if (!target) return send(res, 400, { error: 'expected /m?url=<encoded url>' });
+      return await media(req, res, target);
+    }
 
     if (path.startsWith('/p/')) {
       const rest = path.slice(3);
