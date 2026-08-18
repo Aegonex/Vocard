@@ -3,7 +3,7 @@ FROM gradle:8.10-jdk17 AS plugin-build
 # adding an innertube relay: YouTube answers LOGIN_REQUIRED to /player from
 # Railway's address range whatever credentials we send, so the API calls have to
 # leave from elsewhere while the audio keeps streaming from here. See relay/.
-ARG YTS_COMMIT=5f3969d698c03962b04c0d251cc2295861d1cc87
+ARG YTS_COMMIT=6c280c01146255012e7f9c02419dc28a556db4aa
 RUN git clone https://github.com/Aegonex/youtube-source.git /src \
  && git -C /src checkout ${YTS_COMMIT}
 WORKDIR /src
