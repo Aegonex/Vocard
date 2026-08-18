@@ -23,7 +23,6 @@ services:
       # Without this the published port answers into the tunnel and never reaches
       # the caller back on the host.
       FIREWALL_OUTBOUND_SUBNETS: 172.16.0.0/12
-      DOT: "off"
     ports:
       - "127.0.0.1:8081:8081"
 
