@@ -45,3 +45,19 @@ time and leaves no way back into the box.
 
 A quick tunnel hands out a new hostname on every restart; move to a named tunnel
 once this proves itself, otherwise a relay restart silently strands the bots.
+
+## Changing exit server
+
+If YouTube starts refusing this exit the way it refuses datacenter addresses,
+download another WireGuard config from Proton and hand it to the switcher:
+
+    ./switch-vpn.sh ~/vocard-relay-XX-99.conf
+
+It swaps the peer details, restarts only the containers inside the VPN's network
+namespace, and prints the new egress address. Lavalink needs no redeploy:
+cloudflared stays up on the host network, so the hostname it is pointed at
+survives. Confirm with `tools/verify-playback.mjs` afterwards.
+
+Not every playback failure is the exit address, though — YouTube also breaks
+things by retiring client versions and by changing how streams are served, and
+those look nothing like a refusal.
