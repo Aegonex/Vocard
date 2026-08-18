@@ -16,6 +16,12 @@ lavalink:
 plugins:
   youtube:
     enabled: true
+    # Innertube API calls leave through relay/ on a host YouTube still trusts;
+    # unset these and the plugin talks to YouTube directly again. Media always
+    # streams straight from here regardless.
+    remoteInnertube:
+      url: "${PLUGINS_YOUTUBE_REMOTEINNERTUBE_URL:}"
+      pass: "${PLUGINS_YOUTUBE_REMOTEINNERTUBE_PASS:}"
   lavasrc:
     providers:
       - 'ytsearch:"%ISRC%"'

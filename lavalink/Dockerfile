@@ -1,8 +1,10 @@
 FROM gradle:8.10-jdk17 AS plugin-build
-# youtube-source PR #229 (feat/sabr-support): remote poToken + SABR fallback,
-# needed because 1.18.2 (latest release) is fully walled by YouTube as of 2026-08-18
-ARG YTS_COMMIT=99ca38e58f95bdda822057b7d5cf6d35997a3867
-RUN git clone https://github.com/ashton045/youtube-source.git /src \
+# youtube-source PR #229 (remote poToken + SABR fallback), plus our own commit
+# adding an innertube relay: YouTube answers LOGIN_REQUIRED to /player from
+# Railway's address range whatever credentials we send, so the API calls have to
+# leave from elsewhere while the audio keeps streaming from here. See relay/.
+ARG YTS_COMMIT=79a006058328947a6ed420fa53fa86c6a07f53cf
+RUN git clone https://github.com/Aegonex/youtube-source.git /src \
  && git -C /src checkout ${YTS_COMMIT}
 WORKDIR /src
 RUN gradle :plugin:build -x test --no-daemon
