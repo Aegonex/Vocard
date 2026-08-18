@@ -182,8 +182,12 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/p/')) {
       const rest = path.slice(3);
       const slash = rest.indexOf('/');
-      if (slash < 1) return send(res, 400, { error: 'expected /p/<host>/<path>' });
-      return await forward(req, res, rest.slice(0, slash), rest.slice(slash));
+      // A bare host is legitimate: the plugin fetches https://www.youtube.com with
+      // no path at all to scrape its client config.
+      if (slash === 0) return send(res, 400, { error: 'expected /p/<host>/<path>' });
+      const host = slash < 0 ? rest : rest.slice(0, slash);
+      const target = slash < 0 ? '/' : rest.slice(slash);
+      return await forward(req, res, host, target);
     }
 
     send(res, 404, { error: 'not found' });
