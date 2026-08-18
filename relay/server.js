@@ -46,13 +46,19 @@ const STRIPPED_RESPONSE_HEADERS = new Set([
 
 const stats = { forwarded: 0, minted: 0, rejected: 0, upstreamErrors: 0, startedAt: Date.now() };
 
-function authorized(req) {
-  if (!TOKEN) return true; // unset token means the operator accepted an open relay
-  const given = req.headers['x-relay-auth'];
+function matchesToken(given) {
   if (typeof given !== 'string') return false;
   const a = Buffer.from(given);
   const b = Buffer.from(TOKEN);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function authorized(req) {
+  if (!TOKEN) return true; // unset token means the operator accepted an open relay
+  // The plugin's poToken client sends its secret as Authorization, while relayed
+  // innertube calls need that header left alone for YouTube's OAuth bearer — so
+  // accept either, and only treat Authorization as ours when it actually matches.
+  return matchesToken(req.headers['x-relay-auth']) || matchesToken(req.headers.authorization);
 }
 
 function send(res, status, payload) {
